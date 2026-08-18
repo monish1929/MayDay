@@ -102,6 +102,10 @@ class _SpikeHomeState extends State<SpikeHome> {
   }
 
   void _say(String message) {
+    // Also to the terminal — the on-screen list alone means whoever is
+    // remote-debugging this (not physically holding the phone) has no way
+    // to read RX/TX/FAILED lines except by transcription.
+    debugPrint('[SPIKE] $message');
     if (!mounted) return;
     setState(() => _log.insert(0, LogLine(message)));
   }
@@ -109,17 +113,33 @@ class _SpikeHomeState extends State<SpikeHome> {
   Future<void> _setUp() async {
     // Android 12+ BLE permissions. Expect this to be the fiddly part —
     // Docs/PERSON_A.md flags it; it is not a sign anything is broken.
-    final Map<Permission, PermissionStatus> granted = await <Permission>[
+    //
+    // The three bluetoothX permissions are the real gate on every API
+    // level. locationWhenInUse is checked separately and NOT treated as
+    // fatal: the manifest declares ACCESS_FINE_LOCATION with
+    // maxSdkVersion=30 (correct — API 31+ uses BLUETOOTH_SCAN's
+    // neverForLocation flag instead). On API 31+ the OS has nothing to
+    // grant for it, permission_handler reports "denied" by default, and
+    // that used to trip a false "nothing will work" alarm on every modern
+    // phone — see the PERSON_A.md log for how that read on a real device.
+    final Map<Permission, PermissionStatus> btGranted = await <Permission>[
       Permission.bluetoothScan,
       Permission.bluetoothAdvertise,
       Permission.bluetoothConnect,
-      Permission.locationWhenInUse, // required below API 31
     ].request();
-    final Iterable<Permission> denied = granted.entries
+    final PermissionStatus locationStatus =
+        await Permission.locationWhenInUse.request();
+
+    final Iterable<Permission> btDenied = btGranted.entries
         .where((MapEntry<Permission, PermissionStatus> e) => !e.value.isGranted)
         .map((MapEntry<Permission, PermissionStatus> e) => e.key);
-    if (denied.isNotEmpty) {
-      _say('PERMISSION DENIED: ${denied.join(', ')} — nothing will work');
+    if (btDenied.isNotEmpty) {
+      _say('PERMISSION DENIED: ${btDenied.join(', ')} — nothing will work');
+    }
+    if (!locationStatus.isGranted) {
+      // Fine on API 31+ (see comment above). On API <=30 this IS required
+      // for scan results and this line is your real warning.
+      _say('location permission not granted — only matters below API 31');
     }
 
     await _central.authorize();
@@ -169,7 +189,7 @@ class _SpikeHomeState extends State<SpikeHome> {
   /// A message arrived over the air. This is the whole point of the spike.
   void _onWriteRequest(GATTCharacteristicWriteRequestedEventArgs args) {
     final String raw = utf8.decode(args.request.value, allowMalformed: true);
-    _peripheral.respondWriteRequest(args.central, args.request);
+    _peripheral.respondWriteRequest(args.request);
 
     final _SpikeMessage? msg = _SpikeMessage.tryParse(raw);
     if (msg == null) {
