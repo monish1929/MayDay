@@ -39,12 +39,13 @@ By end of week 1, unit tests should prove the trust engine behaves correctly *be
 # WEEK 1 — PHASE 1: DATA LAYER
 
 ### Day 1 — Schema and storage
-- [ ] SQLite set up (`sqflite` or `drift` — pick one, note why)
-- [ ] `claims`, `corroborations`, `seen_messages` tables exactly per `CLAIM_SCHEMA.md` §10
-- [ ] All enums as **real Dart enums**, never strings or bare ints in code
-- [ ] `Claim` model with CBOR encode/decode for `payload`
-- [ ] Assert: `display_lifetime_ms` is **NULL** for `sos`/`sosProxy` — not a large number
-- [ ] Assert: `ResolutionMethod.autoExpired` is impossible for SOS types
+
+- [x] SQLite set up (`sqflite` or `drift` — pick one, note why in the log)
+- [x] `claims`, `corroborations`, `seen_messages` tables exactly per `CLAIM_SCHEMA.md` §10
+- [x] All enums as **real Dart enums** (§11), never strings or bare ints in code
+- [x] `Claim` model class with CBOR encode/decode for `payload`
+- [x] Assert: `display_lifetime_ms` is **NULL** for `sos`/`sosProxy` (§10.1) — not a large number
+- [x] Assert: `ResolutionMethod.autoExpired` is impossible for SOS types
 
 ### Day 2 — The two ID paths *(the critical day)*
 - [ ] `sosClaimId(deviceId, sequence)` — unique, never merges
@@ -319,11 +320,13 @@ Beyond the standard checks in `CLAUDE.md` §4.5:
 
 ## Progress log
 
-| Date | Week/Day | Branch | What landed | Blocked on / notes |
-|---|---|---|---|---|
-| | | | | |
-| | | | | |
-| | | | | |
+Update after each work session. Short entries — this is for the team sync.
+
+| Date | Branch | What landed | Blocked on / notes |
+|---|---|---|---|
+| Day 1 | `b/claim-schema` | SQLite setup + models | Selected `sqflite` over `drift` to execute raw schema precisely |
+| | | | |
+| | | | |
 
 ### Open questions I'm carrying
 
