@@ -76,7 +76,13 @@ class SimulationStore {
     }
   }
   
-  List<Claim> get activeClaims => _claims.values.toList();
+  void resolveClaim(String id) {
+    if (_claims.containsKey(id)) {
+      _claims[id]!.status = ClaimStatus.resolved;
+    }
+  }
+
+  List<Claim> get activeClaims => _claims.values.where((c) => c.status == ClaimStatus.active).toList();
 }
 
 void main() {
@@ -161,6 +167,14 @@ void main() {
       store.receiveClaim(claim2);
 
       expect(store.activeClaims.length, equals(2), reason: 'SOS claims must never merge');
+
+      // Resolve one claim
+      store.resolveClaim(sos1Id);
+
+      // Verify the other remains untouched and active
+      expect(store.activeClaims.length, equals(1), reason: 'Resolving one must leave the other');
+      expect(store.activeClaims.first.id, equals(sos2Id), reason: 'The correct claim remains active');
+      expect(store.activeClaims.first.status, equals(ClaimStatus.active), reason: 'Remaining claim is ACTIVE');
     });
 
     test('A device corroborating something it first saw via mesh → rejected (from trust)', () {
