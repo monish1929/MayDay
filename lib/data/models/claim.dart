@@ -39,7 +39,7 @@ class Claim {
     required this.logicalClock,
     required this.claimTrust,
     required this.dispatchPriority,
-    this.corroborations = const [],
+    List<Corroboration>? corroborations,
     required this.status,
     this.resolutionMethod,
     this.resolvedByVolunteerId,
@@ -50,7 +50,7 @@ class Claim {
     this.lastConfirmedAtLogical,
     this.archivedAtLogical,
     required this.payload,
-  }) {
+  }) : corroborations = corroborations ?? [] {
     // Assertions as per CLAIM_SCHEMA.md §10.1
     assert(
       !(type == ClaimType.sos || type == ClaimType.sosProxy) || displayLifetime == null,

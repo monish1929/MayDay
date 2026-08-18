@@ -89,12 +89,12 @@ This is the single most important test in the repo. It's the bug that would have
 
 ### Day 5 — Multi-device simulation harness
 
-- [ ] Simulate N fake "devices" writing claims into one store
-- [ ] Two devices independently generating a matching hazard → merges, count rises
-- [ ] Two devices raising SOS in the same bucket → **stays two claims**
-- [ ] A device corroborating something it first saw via mesh → **rejected**
-- [ ] Twenty devices each claiming the last resource, then merging → availability floors at 0, **never negative**
-- [ ] SOS with zero corroborations after a long simulated period → **still ACTIVE, still visible**
+- [x] Simulate N fake "devices" writing claims into one store
+- [x] Two devices independently generating a matching hazard → merges, count rises
+- [x] Two devices raising SOS in the same bucket → **stays two claims**
+- [x] A device corroborating something it first saw via mesh → **rejected**
+- [x] Twenty devices each claiming the last resource, then merging → availability floors at 0, **never negative**
+- [x] SOS with zero corroborations after a long simulated period → **still ACTIVE, still visible**
 
 **This harness is my dress rehearsal for Phase 2.** Every bug I catch here is a bug A and I don't have to chase across two physical phones next week.
 
@@ -179,6 +179,7 @@ Update after each work session. Short entries — this is for the team sync.
 | Day 2 | `b/claim-schema` | ID paths + critical test | `dart_geohash` for bucketing, `shared_preferences` for counter |
 | Day 3 | `b/claim-schema` | Trust engine + tests | Implemented rule set based on §3, tests passing |
 | Day 4 | `b/claim-schema` | Decay & logic clocks | `LogicalClock` Comparable + `MeshTimeGossip` stub |
+| Day 5 | `b/claim-schema` | Simulation harness | Proved merge, anti-echo, and resource flooring logic |
 
 ### Open questions I'm carrying
 
