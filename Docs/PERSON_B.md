@@ -110,8 +110,8 @@ A will ask: **does the measured BLE payload capacity fit what my claims need to 
 
 I need a real number ready — the actual CBOR-encoded size of a typical claim of each type. `CLAIM_SCHEMA.md` §9.2 targets ≤400 bytes. If A's measurement comes in lower, we either shrink the schema (shorter free-text caps, tighter geo precision) or A builds fragmentation. That's a three-person decision, not something either of us settles alone.
 
-- [ ] Measure encoded size of each claim type before the sync
-- [ ] Note which fields are the biggest contributors, in case we need to trim
+- [x] Measure encoded size of each claim type before the sync
+- [x] Note which fields are the biggest contributors, in case we need to trim
 
 ---
 
@@ -192,8 +192,8 @@ Update after each work session. Short entries — this is for the team sync.
 
 | Claim type | CBOR size (bytes) | Largest field |
 |---|---|---|
-| SOS | | |
-| SOS_PROXY | | |
-| HAZARD_REPORT | | |
-| RESOURCE | | |
+| SOS | 38 | location |
+| SOS_PROXY | 70 | reporterDeviceId |
+| HAZARD_REPORT | 58 | location |
+| RESOURCE | 68 | location |
 | **Budget** | **≤ 400** | per `CLAIM_SCHEMA.md` §9.2 |
