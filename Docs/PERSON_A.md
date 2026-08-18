@@ -40,13 +40,13 @@ If BLE mesh turns out to be painful on our test devices, everyone needs to know 
 
 ### Day 1–2 — Two phones talking
 
-- ✅ New scratch Flutter project — `spike/phase0_ble_mesh/`. Package: **`bluetooth_low_energy`**, *not* `flutter_blue_plus`; see §9 open questions for why
-- ✅ Android BLE permissions sorted — manifest block in place; fixed a real bug where the spike unconditionally requested `locationWhenInUse` and treated any denial as fatal, when it's correctly unrequestable on API 31+ (manifest declares it `maxSdkVersion=30`, matching the `neverForLocation` flag on `BLUETOOTH_SCAN`). Verified clean on a real API 33 device
-- ✅ Phone 1 advertises a custom service UUID — confirmed via `BluetoothGattServer addService()`/`onServiceAdded() status=0`
-- ✅ Phone 2 scans and discovers it — `FOUND` fired, 245ms on the one clean-methodology sample (advertiser already live before scan started)
-- ✅ Connect, write a hardcoded string over a GATT characteristic — `20B OK` write confirmed on real hardware
-- ✅ Phone 2 displays the received string on screen — confirmed by direct observation on phone B
-- ✅ **Both directions** — A→B and B→A both confirmed. Bonus: de-dup cache also verified working (A correctly dropped its own message after B relayed it back — `RX dup A-0 — dropped, not relayed`)
+- [✔] New scratch Flutter project — `spike/phase0_ble_mesh/`. Package: **`bluetooth_low_energy`**, *not* `flutter_blue_plus`; see §9 open questions for why
+- [✔] Android BLE permissions sorted — manifest block in place; fixed a real bug where the spike unconditionally requested `locationWhenInUse` and treated any denial as fatal, when it's correctly unrequestable on API 31+ (manifest declares it `maxSdkVersion=30`, matching the `neverForLocation` flag on `BLUETOOTH_SCAN`). Verified clean on a real API 33 device
+- [✔] Phone 1 advertises a custom service UUID — confirmed via `BluetoothGattServer addService()`/`onServiceAdded() status=0`
+- [✔] Phone 2 scans and discovers it — `FOUND` fired, 245ms on the one clean-methodology sample (advertiser already live before scan started)
+- [✔] Connect, write a hardcoded string over a GATT characteristic — `20B OK` write confirmed on real hardware
+- [✔] Phone 2 displays the received string on screen — confirmed by direct observation on phone B
+- [✔] **Both directions** — A→B and B→A both confirmed. Bonus: de-dup cache also verified working (A correctly dropped its own message after B relayed it back — `RX dup A-0 — dropped, not relayed`)
 
 **Gotcha to expect:** Android 12+ permission model for BLE is genuinely fiddly and the plugin docs lag behind. Budget time for this; it is not a sign anything is wrong.
 
@@ -168,7 +168,7 @@ Update after each work session. Keep it short — this is for the team sync, not
 - [ ] `hopLimit` default per message type — **TBD pending my Phase 0 range data.** Don't let anyone pick a number before that lands.
 - [ ] Is Wi-Fi Direct needed for MVP at all? — Phase 0 answers this
 - [ ] Does flood routing cause broadcast storms at relief-camp density (hundreds of phones)? — needs a later, bigger test than I can run in week 1
-- [x] `flutter_blue_plus` vs `flutter_reactive_ble` — **neither.** Both are BLE *central-role only*: they scan and connect, they cannot advertise. A mesh node has to be peripheral **and** central simultaneously, or nobody can find anybody. `flutter_ble_peripheral` advertises but exposes no GATT server, so there is no writable characteristic to be written into — pairing it with `flutter_blue_plus` still doesn't close the loop. **Decided: `bluetooth_low_energy` ^6.2.1**, which does both roles including a GATT server with write callbacks. Trade-off: smaller user base than `flutter_blue_plus`. Fallback if it misbehaves on our devices is a hand-written Android platform channel over `BluetoothGattServer`.
+- [✔] `flutter_blue_plus` vs `flutter_reactive_ble` — **neither.** Both are BLE *central-role only*: they scan and connect, they cannot advertise. A mesh node has to be peripheral **and** central simultaneously, or nobody can find anybody. `flutter_ble_peripheral` advertises but exposes no GATT server, so there is no writable characteristic to be written into — pairing it with `flutter_blue_plus` still doesn't close the loop. **Decided: `bluetooth_low_energy` ^6.2.1**, which does both roles including a GATT server with write callbacks. Trade-off: smaller user base than `flutter_blue_plus`. Fallback if it misbehaves on our devices is a hand-written Android platform channel over `BluetoothGattServer`.
 
 ### Phase 0 findings (fill in day 5)
 

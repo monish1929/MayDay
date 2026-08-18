@@ -153,7 +153,14 @@ class _SpikeHomeState extends State<SpikeHome> {
 
   // --------------------------------------------------------------- peripheral
 
-  Future<void> _startAdvertising() async {
+  Future<void> _toggleAdvertising() async {
+    if (_advertising) {
+      await _peripheral.stopAdvertising();
+      setState(() => _advertising = false);
+      _say('advertising stopped');
+      return;
+    }
+
     final GATTCharacteristic messageChar = GATTCharacteristic.mutable(
       uuid: kMessageCharUuid,
       properties: <GATTCharacteristicProperty>[
@@ -218,7 +225,19 @@ class _SpikeHomeState extends State<SpikeHome> {
 
   // ------------------------------------------------------------------ central
 
-  Future<void> _startScanning() async {
+  Future<void> _toggleScanning() async {
+    if (_scanning) {
+      await _central.stopDiscovery();
+      setState(() => _scanning = false);
+      _say('scanning stopped');
+      return;
+    }
+
+    // Clear previously-found peers on restart, not just on first start — the
+    // Day 4 best/worst-of-10 discovery timing (Docs/PERSON_A.md §3) needs a
+    // fresh FOUND for every run, and _onDiscovered ignores anything already
+    // in _peers.
+    setState(() => _peers.clear());
     _discoveryStartedAt = DateTime.now();
     await _central.startDiscovery(serviceUUIDs: <UUID>[kServiceUuid]);
     setState(() => _scanning = true);
@@ -320,12 +339,12 @@ class _SpikeHomeState extends State<SpikeHome> {
             spacing: 8,
             children: <Widget>[
               FilledButton(
-                onPressed: _advertising ? null : _startAdvertising,
-                child: const Text('Advertise'),
+                onPressed: _toggleAdvertising,
+                child: Text(_advertising ? 'Stop advertising' : 'Advertise'),
               ),
               FilledButton(
-                onPressed: _scanning ? null : _startScanning,
-                child: const Text('Scan'),
+                onPressed: _toggleScanning,
+                child: Text(_scanning ? 'Stop scanning' : 'Scan'),
               ),
               FilledButton(
                 onPressed: _peers.isEmpty ? null : _send,
