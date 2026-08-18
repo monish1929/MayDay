@@ -1,12 +1,12 @@
 # PERSON_B.md — Data Layer & Trust Engine
 
 **Owner:** B
-**Branch prefix:** `b/` · pairing branches `ab/`
+**Branch prefix:** `b/`
 **Primary folder:** `lib/data/`
 **Reviews my PRs:** A (always, for anything in `data/`)
 **I review:** A's `mesh/` PRs
 
-Read `CLAUDE.md` and `CLAIM_SCHEMA.md` first. This is my task list and progress log — tick boxes as I go, keep the log at the bottom current.
+Read `CLAUDE.md` and `CLAIM_SCHEMA.md` first. This file is my task list and progress log — update the checkboxes as I go, and fill in the log at the bottom.
 
 ---
 
@@ -14,29 +14,28 @@ Read `CLAUDE.md` and `CLAIM_SCHEMA.md` first. This is my task list and progress 
 
 The Claim — what it is, how it's identified, how it's stored, and how much we believe it.
 
-- The `Claim` model and SQLite persistence
-- **The two claim-ID functions** — the most important code in the repo
-- Trust state machine: UNCONFIRMED → CORROBORATED → GROUND_CONFIRMED
-- Corroboration rules including the anti-echo rule
-- Type-specific decay
-- Logical clocks and mesh time gossip
-- Resource counter semantics — add-only, computed availability
+- The `Claim` model and SQLite persistence (`CLAIM_SCHEMA.md` §1, §10)
+- **The two claim-ID functions** (§2) — the most important code in the repo
+- Trust state machine: UNCONFIRMED → CORROBORATED → GROUND_CONFIRMED (§3)
+- Corroboration rules, including the anti-echo rule (§3.2)
+- Type-specific decay (§7)
+- Logical clocks and mesh time gossip (§4)
+- Resource counter semantics — add-only, computed availability (§8.1)
 - CBOR serialization of the payload
-- Storage budget and eviction
 
-**What I don't own:** getting bytes between phones (A's) or how anything looks (C's). My layer must be **fully testable with no radio and no widget tree.** If a test needs a Flutter widget or a BLE connection, I've built it wrong.
+**What I don't own:** getting bytes between phones (A's), or how anything looks (C's). My layer must be fully testable with **no radio and no widget tree.**
 
 ---
 
 ## 2. Why my week 1 is pure logic, deliberately
 
-Everything I build in week 1 runs on one device with fake data. No networking, no UI. That's the point — this is where correctness is subtle and testable, and it's far easier to get right in isolation than while also debugging BLE.
+Everything I build in week 1 runs on one device with fake data. No networking, no UI. That's the point — this is the part of the system where correctness is subtle and testable, and it's much easier to get right in isolation than while also debugging BLE.
 
-By end of week 1, unit tests should prove the trust engine behaves correctly *before* it has to survive being carried across a mesh.
+By end of week 1 I should be able to prove, with unit tests, that the trust engine behaves correctly *before* it has to survive being carried across a mesh.
 
 ---
 
-# WEEK 1 — PHASE 1: DATA LAYER
+## 3. Week 1 — Phase 1: Data layer
 
 ### Day 1 — Schema and storage
 
@@ -57,261 +56,111 @@ By end of week 1, unit tests should prove the trust engine behaves correctly *be
 - [x] Geohash bucketing at 7 chars (~150m)
 - [x] **No timestamp anywhere in either formula** (§2.4)
 
-
 **Write this test before anything else:**
+
 ```
 Two SOS claims, same geohash bucket, same minute, different origin devices
   → two distinct IDs
   → two separate records
   → resolving one leaves the other untouched and ACTIVE
 ```
-The single most important test in the repo — the bug that would have made the system lose people.
+
+This is the single most important test in the repo. It's the bug that would have made the system lose people — two families on one street collapsing into one claim, one rescue clearing both.
 
 ### Day 3 — Trust state machine
-- [ ] UNCONFIRMED → CORROBORATED → GROUND_CONFIRMED; no skipping, no reversal from groundConfirmed
-- [ ] Only `independentGeneration` and `explicitAttestation` raise trust
-- [ ] **Relaying raises nothing** — not represented in `CorroborationKind` at all
-- [ ] Anti-echo rule via `firstSeenVia`
-- [ ] `dispatchPriority` moves independently — a volunteer seeing a claim raises priority, **never** trust
-- [ ] Weighting by `hopDistance` and `signalStrength`, not raw device count
-- [ ] Newcomer discount: a device unseen before the claim existed carries little weight
-- [ ] Per-device contribution cap
+
+- [x] UNCONFIRMED → CORROBORATED → GROUND_CONFIRMED, no stage skipping, no going back from GROUND_CONFIRMED
+- [x] Only two things raise trust: `independentGeneration` and `explicitAttestation` (§3.1)
+- [x] **Relaying raises nothing.** Not represented in `CorroborationKind` at all.
+- [x] Anti-echo rule via `firstSeenVia` (§3.2)
+- [x] `dispatchPriority` moves independently — a volunteer seeing a claim raises priority, **never** trust (§3.4)
+- [x] Weighting by `hopDistance` and `signalStrength`, not raw device count
+- [x] Newcomer discount: a device unseen before the claim existed carries little weight
+- [x] Per-device contribution cap
 
 ### Day 4 — Decay and logical clocks
-- [ ] `displayLifetimeFor(type)` returns **`null`** for SOS types
-- [ ] Hazard: long window. Resource: shortest. Values TBD — named constants, flagged.
-- [ ] `LogicalClock` — per-device counter, increments on every send
-- [ ] Ordering between devices uses logical clocks, **never** `DateTime`
-- [ ] Mesh time gossip → display-only estimate
-- [ ] Nothing that could affect an SOS ever reads a wall clock
+
+- [x] `displayLifetimeFor(type)` returns **`null`** for SOS types (§7)
+- [x] Hazard: long window. Resource: shortest. Values TBD — leave as named constants, flag them.
+- [x] `LogicalClock` — per-device counter, increments on every send
+- [x] Ordering between devices uses logical clocks, **never** `DateTime`
+- [x] Mesh time gossip → `createdAtLogical` estimate, display only
+- [x] Nothing that could affect an SOS ever reads a wall clock
 
 ### Day 5 — Multi-device simulation harness
+
 - [ ] Simulate N fake "devices" writing claims into one store
 - [ ] Two devices independently generating a matching hazard → merges, count rises
 - [ ] Two devices raising SOS in the same bucket → **stays two claims**
 - [ ] A device corroborating something it first saw via mesh → **rejected**
-- [ ] Twenty devices each claiming the last resource → availability floors at 0, **never negative**
+- [ ] Twenty devices each claiming the last resource, then merging → availability floors at 0, **never negative**
 - [ ] SOS with zero corroborations after a long simulated period → **still ACTIVE, still visible**
 
-**This harness is my dress rehearsal for Phase 2.** Every bug caught here is one A and I don't chase across two physical phones next week.
+**This harness is my dress rehearsal for Phase 2.** Every bug I catch here is a bug A and I don't have to chase across two physical phones next week.
 
-**Exit criteria:** unit tests prove merge, corroboration, decay, and resource counting behave correctly, with no networking in the picture.
+### Exit criteria
 
-**Sync — what I bring:** the actual CBOR-encoded size of a typical claim of each type. Budget is ≤400 bytes. If A's measured payload capacity comes in lower, we shrink the schema (shorter text caps, tighter geo precision) or A builds fragmentation — a three-person decision.
-
----
-
-# WEEK 2 — PHASE 2: TRANSPORT ↔ DATA (paired with A)
-
-Branch prefix `ab/`. C works solo swapping mocks for my Phase 1 store — they aren't blocked on us.
-
-### Day 1 — Serialization contract
-- [ ] Freeze the CBOR encoding of each `ClaimPayload` type with A
-- [ ] Measure real encoded size per type; compare against A's measured max write
-- [ ] If over budget: shrink free-text caps or geo precision **before** anyone considers fragmentation
-- [ ] Round-trip test: `Claim` → CBOR → bytes → CBOR → `Claim`, field-for-field identical
-- [ ] Confirm enums serialize as **ints**, not names
-
-### Day 2 — Signing the immutable core
-- [ ] Define the canonical byte ordering for the signed payload — must be deterministic across devices
-- [ ] Sign only: `id`, `type`, `originDeviceId`, `logicalClock`, `payload`, `createdAtLogical`
-- [ ] **Exclude** `corroborations`, `claimTrust`, `dispatchPriority`, `hopLimit` — mutable or per-hop
-- [ ] Verify a claim signed on device 1 validates on device 2
-- [ ] Re-serializing a received claim produces a byte-identical signed core (this is what makes verification stable)
-
-Deterministic ordering matters more than it looks: if two devices encode the same map in different key order, signatures fail for no visible reason.
-
-### Day 3 — Ingest from the mesh
-- [ ] `ingestClaim()` — accept a verified claim from A's layer and store it
-- [ ] A claim already in the store → merge per type rules, don't duplicate
-- [ ] Corroboration arriving separately → attach to the right claim, recompute trust
-- [ ] `firstSeenVia` set correctly on ingest — this is what the anti-echo rule reads
-- [ ] Ingest is idempotent: the same claim twice leaves the store unchanged
-
-### Day 4 — Two-phone verification, then three-way integration
-- [ ] Claim from phone 1 lands in phone 2's store with trust computed correctly
-- [ ] **Relaying between two real phones does not move trust** — verify on hardware, not just in the harness
-- [ ] Corroboration from a genuinely distinct second device *does* move it
-- [ ] Join C: two SOS in one geohash bucket render as two pins
-- [ ] Confirm C reads availability from my layer rather than caching it
-
-### Day 5 — Query layer for the UI
-- [ ] `watchActiveClaims()` — reactive stream C can bind to
-- [ ] Filter by layer: emergency (`sos`, `sosProxy`, `hazardReport`) vs `resource`
-- [ ] Sort helper for the volunteer queue: `dispatchPriority` then trust
-- [ ] `availableFor(resourceClaim)` computing `max(0, pledged - claimed)` — **never a stored field**
-- [ ] Relative-time helper from logical clocks, for C's "about 2 hours ago"
-
-**Exit criteria:** claims cross the wire and land in the store with correct trust, and C's UI reads live from it.
+Unit tests prove merge, corroboration, decay, and resource counting all behave correctly, with no networking anywhere in the picture.
 
 ---
 
-# WEEK 3 — PHASE 3: REPORT FLOW
+## 4. The week 1 sync — what I bring
 
-I take Report — geohash merging and confirmation counts, closest to what I've already built. A takes Rescue, C takes Contribute. Back to `b/` branches.
+A will ask: **does the measured BLE payload capacity fit what my claims need to serialize?**
 
-### Day 1 — Hazard report creation and merging
-- [ ] Report creation end to end with all `HazardType` values
-- [ ] Two reports, same type, same bucket, different devices → **one claim, count 2**
-- [ ] Same type, **different** bucket → two separate claims
-- [ ] **Different** type, same bucket → two separate claims (a flood and a road block at one junction are different facts)
-- [ ] `confirmationCount` increments only on genuine independent generation
+I need a real number ready — the actual CBOR-encoded size of a typical claim of each type. `CLAIM_SCHEMA.md` §9.2 targets ≤400 bytes. If A's measurement comes in lower, we either shrink the schema (shorter free-text caps, tighter geo precision) or A builds fragmentation. That's a three-person decision, not something either of us settles alone.
 
-### Day 2 — The anti-echo rule under real conditions
-- [ ] Device C receives A's report via relay, then files "the same" report → **does not count**
-- [ ] Device C independently generates before ever seeing A's → **counts**
-- [ ] Explicit attestation ("I can see this too") → counts, and is distinguishable in the record
-- [ ] One device attesting twice → counted once (`PRIMARY KEY (claim_id, device_id)`)
-- [ ] Test on real hardware with A, not only in the harness
-
-**Why this matters:** without it, ten people "confirm" a rumour they all read on the same relayed message. That's one witness and nine repeaters.
-
-### Day 3 — Report decay and lifecycle
-- [ ] Hazard reports decay after their window; SOS types remain exempt
-- [ ] A report with rising confirmations refreshes its window — an actively-reconfirmed hazard shouldn't expire
-- [ ] Volunteer ground-confirms a report → `groundConfirmed`, decay stops
-- [ ] Volunteer marks a hazard cleared (road reopened) → `resolved`, propagates
-- [ ] Confirm `autoExpired` never appears on a SOS-type claim
-
-### Day 4 — Corroboration weighting in practice
-- [ ] Weighting genuinely uses `hopDistance` and `signalStrength`, not just device count
-- [ ] Newcomer discount fires for a device unseen before the claim existed
-- [ ] Contribution cap holds — one device can't push a claim to CORROBORATED alone
-- [ ] Volunteer attestation weighted higher than a general user's, but still **attestation, not ground confirmation**
-- [ ] Write the Sybil test: one device presenting five identities does **not** reach CORROBORATED
-
-### Day 5 — Adversarial test suite
-Formalise the cases from `CLAUDE.md` §6.2 as permanent tests:
-- [ ] Two SOS, same bucket, same minute → two claims *(the critical one)*
-- [ ] Replayed QR without fresh nonce → rejected
-- [ ] Mesh-relayed corroboration → rejected
-- [ ] Multi-identity corroboration → capped
-- [ ] Twenty offline devices claiming one resource → floors at 0
-- [ ] Storage pressure with active SOS → SOS retained
-- [ ] Wire these into CI so they can't quietly regress
-
-**Exit criteria:** hazard reports merge correctly, echo chambers can't inflate confidence, and the adversarial suite runs green in CI.
+- [ ] Measure encoded size of each claim type before the sync
+- [ ] Note which fields are the biggest contributors, in case we need to trim
 
 ---
 
-# WEEK 4 — PHASE 4: IDENTITY, CRDT, TIME
+## 5. Week 2 — Phase 2, pairing with A
 
-Phase 4 splits three ways across one feature. **My share: keypairs, secure storage, and node trust.** A does vouch/revocation transport; C does the volunteer UI.
+Branch prefix `ab/`. We stop working solo.
 
-### Day 1 — Keypair generation and secure storage
-- [ ] Ed25519 keypair generated on first launch (libsodium via `cryptography` or similar)
-- [ ] Private key in hardware-backed storage (Keystore/Keychain)
-- [ ] Public key is the device identity — `originDeviceId` derives from it
-- [ ] **Document honestly:** Android deletes Keystore keys on uninstall, so identity does not survive reinstall. Recovery is via vouching, not a server.
-- [ ] Optional encrypted identity backup file — flag its theft risk if we build it
+- [ ] Claim → CBOR → over the wire → decode → verify signature → into my store
+- [ ] Signature covers the immutable core only (`CLAIM_SCHEMA.md` §5) — not `corroborations`, `claimTrust`, `dispatchPriority`, `hopLimit`
+- [ ] Receive pipeline order respected: de-dup → verify → decrement → store → relay (§9.3)
+- [ ] Corroboration arriving from a genuinely second physical device upgrades trust correctly
+- [ ] Relaying a claim between two phones does **not** move trust — verify this on real hardware, not just in the harness
 
-### Day 2 — Volunteer credentials and node trust
-- [ ] Campaign credential = organiser's signature over the volunteer's public key
-- [ ] `NodeTrust` state: `campaignVerified` / `vouchedProvisional` / `unverified`
-- [ ] Phone number stored as a **display label only**, never a credential — deriving a credential from a 10-digit number with known prefixes would be trivially brute-forceable
-- [ ] Verify a credential fully offline against the organiser's public key
-- [ ] Provisional nodes: can respond to SOS and ground-confirm, **cannot pledge resources, cannot vouch**
-
-### Day 3 — Vouching state, promotion, revocation
-- [ ] Apply A's incoming vouch messages to local node trust
-- [ ] **Two vouches from independent campaign-verified volunteers → promote to full trust**
-- [ ] One vouch → stays provisional with limited powers
-- [ ] Vouch cap of 5 enforced on receipt, read from inside the signed vouch
-- [ ] Revocation overrides the vouch; most recent valid one wins by logical clock
-- [ ] A revoked node's past corroborations are re-weighted, not silently deleted
-
-### Day 4 — CRDT resource ledger
-- [ ] Pick the CRDT library. **Semantics are already settled — add-only counters. Don't reopen that as part of picking a library.**
-- [ ] `pledgedCount` and `claimedReports` as separate grow-only counters
-- [ ] Merge two divergent replicas → both totals converge, availability floors at 0
-- [ ] Twenty-device partition merge → **never negative** (the −19 case)
-- [ ] Replica disagreement surfaces as a **range** for C ("2–6 packets")
-- [ ] Volunteer-only reset of the authoritative count
-
-### Day 5 — Time gossip
-- [ ] Consume A's `kind: 6` readings; maintain a mesh-median estimate
-- [ ] Weight volunteer clocks higher
-- [ ] Estimate feeds `createdAtLogical` display values only — never identity, ordering, or SOS decay
-- [ ] Tolerance window for matching hazard reports across drifted clocks, sized from A's measured drift
-- [ ] Test: two devices 5 minutes apart still merge matching hazard reports correctly
-
-**Exit criteria:** identity works fully offline, vouching promotes and revokes correctly, resource counters converge without going negative, and clock drift no longer breaks merging.
+**Why pair rather than split:** A can't see my assumptions about the schema, I can't see A's about the wire. This seam is where the relay-as-corroboration and clock-drift bugs would hide. Two people at one keyboard for three days beats debugging corrupted trust state later.
 
 ---
 
-# WEEK 5 — HARDENING & CORRECTNESS
+## 6. Later phases
 
-### Day 1 — Storage eviction
-- [ ] 200 MB claim-store cap with eviction ordering: archived+resolved → oldest resolved → oldest low-priority resource pins
-- [ ] **Active SOS is never evicted at any storage pressure** — test this explicitly by filling the store
-- [ ] Warn the user before storage becomes critical
-- [ ] Archived claims purge only after their retention window
-- [ ] With A: confirm map tiles are evicted before active SOS records
+**Phase 3** — I take one of the three flows, likely **Report** (geohash merging, confirmation counts) — closest to what I've already built.
 
-### Day 2 — Partition and convergence
-- [ ] With A: split the mesh, generate claims on both sides, rejoin
-- [ ] Hazard reports merge correctly post-rejoin, counts sum without double-counting
-- [ ] SOS claims from both sides stay distinct
-- [ ] A resolution issued during partition applies after rejoin
-- [ ] Conflicting `dispatchPriority` updates resolve by logical clock
-
-### Day 3 — Performance on low-end hardware
-- [ ] Load the store with 5,000 claims — how slow is the map query?
-- [ ] Index effectiveness on `(status, type)` and `geohash_bucket`
-- [ ] Reactive stream doesn't re-query the world on every insert
-- [ ] Ingest throughput: can I keep up with a burst of relayed claims?
-- [ ] Profile on the **cheapest** device we have, not the best
-
-### Day 4 — Full adversarial re-run
-- [ ] Run the whole suite from Week 3 Day 5 against real multi-device data
-- [ ] Add: malformed CBOR payload → rejected, no crash
-- [ ] Add: claim with valid signature but nonsense location → handled
-- [ ] Add: sequence number replay from one device → detected
-- [ ] Add: a `groundConfirmed` claim can't be downgraded by later contradicting corroborations
-
-### Day 5 — Documentation and invariant audit
-- [ ] Walk `CLAIM_SCHEMA.md` §12 line by line against the actual code — **every invariant, confirmed in the implementation, not assumed**
-- [ ] Update the schema doc with anything decided during weeks 2–5
-- [ ] Confirm every invariant-enforcing branch carries a comment explaining why
-- [ ] Log any deviations found and fix or record them
-- [ ] Close or re-scope my open questions below
-
-**Exit criteria:** the data layer survives partitions, storage pressure, adversarial input, and low-end hardware — with the invariant audit signed off.
+**Phase 4+**
+- [ ] CRDT for the resource ledger — **semantics are already settled** (add-only counters, §8.1). Only the library choice is open. Don't let "pick a CRDT library" become a redesign.
+- [ ] Storage eviction policy (§10.2) — with active SOS never evicted
+- [ ] Time gossip refinement, volunteer clocks weighted higher
 
 ---
 
-# BEYOND WEEK 5 — BACKLOG
+## 7. Invariants I'm personally responsible for
 
-- [ ] Delta sync — send only what a peer is missing rather than re-flooding
-- [ ] Smarter geohash merging near bucket boundaries (two reports 10m apart, different buckets)
-- [ ] Claim compaction — collapse a long corroboration list once past a confidence ceiling
-- [ ] Encrypted identity backup/restore, if the team accepts the theft risk
-- [ ] Historical archive export for post-disaster reporting (manual, offline — **not** a sync path)
-- [ ] Tunable trust thresholds per deployment region
+Every one of these was a real bug in v1 of the design. They are not stylistic.
 
----
-
-## Invariants I'm personally responsible for
-
-Every one was a real bug in v1. Not stylistic.
-
-- **SOS IDs are unique and never merge.** Two code paths, not one function with a branch. If someone refactors them together during a cleanup, the bug comes straight back.
-- **Relaying is never corroboration.** v1 said "generated *or relayed*," which meant a fabricated SOS hit CORROBORATED — labelled "genuine evidence" — after a single hop.
-- **The anti-echo rule holds.** Ten people confirming a rumour they all read on one screen is one witness and nine repeaters.
-- **SOS never decays.** `displayLifetime` is `null` — not a large number. A person trapped alone is UNCONFIRMED *because* nobody is nearby to corroborate; blanket decay deletes the call for help from the person in most danger.
-- **`available` is computed, never stored.** Storing it is how a counter goes negative when twenty offline devices merge.
-- **Trust and priority stay separate.** A volunteer touching a claim knows no more than anyone else at that moment.
-- **No wall clock in identity, ordering, or any decay decision affecting an SOS.**
+- **SOS IDs are unique and never merge** (§2). Two code paths, not one function with a branch. If someone refactors them together during a cleanup, the bug comes straight back.
+- **Relaying is never corroboration** (§3.1). v1 said "generated *or relayed*," which meant a fabricated SOS hit CORROBORATED — labelled "genuine evidence" — after a single hop.
+- **Anti-echo rule holds** (§3.2). Ten people confirming a rumour they all read on the same screen is one witness and nine repeaters.
+- **SOS never decays** (§7). `displayLifetime` is `null` — not a large number. A person trapped alone is UNCONFIRMED *because* nobody is nearby to corroborate; blanket decay deletes the call for help from the person in most danger.
+- **`available` is computed, never stored** (§8.1). Storing it is how a counter goes negative when twenty offline devices merge.
+- **Trust and priority stay separate fields** (§3.4). A volunteer touching a claim knows no more than anyone else at that moment.
+- **No wall clock in identity, ordering, or any decay decision affecting an SOS** (§4).
 
 ---
 
-## My PR checklist
+## 8. My PR checklist
 
 Beyond the standard checks in `CLAUDE.md` §4.5:
 
-- [ ] SOS unique-ID path and mergeable-ID path tested **separately** — confirmed not a shared code path
+- [ ] SOS unique-ID path and mergeable-ID path tested **separately** — confirmed they are not a shared code path
 - [ ] Relaying does **not** upgrade `claimTrust`
-- [ ] Anti-echo rule holds
+- [ ] Anti-echo rule holds: a device can't corroborate what it first saw via mesh
 - [ ] SOS/SOS_PROXY exempt from decay; `displayLifetime` is `null`
 - [ ] `claimTrust` and `dispatchPriority` written independently
 - [ ] Resource counters add-only; availability computed at read time
@@ -320,7 +169,7 @@ Beyond the standard checks in `CLAUDE.md` §4.5:
 
 ---
 
-## Progress log
+## 9. Progress log
 
 Update after each work session. Short entries — this is for the team sync.
 
@@ -328,39 +177,22 @@ Update after each work session. Short entries — this is for the team sync.
 |---|---|---|---|
 | Day 1 | `b/claim-schema` | SQLite setup + models | Selected `sqflite` over `drift` to execute raw schema precisely |
 | Day 2 | `b/claim-schema` | ID paths + critical test | `dart_geohash` for bucketing, `shared_preferences` for counter |
-| | | | |
+| Day 3 | `b/claim-schema` | Trust engine + tests | Implemented rule set based on §3, tests passing |
+| Day 4 | `b/claim-schema` | Decay & logic clocks | `LogicalClock` Comparable + `MeshTimeGossip` stub |
 
 ### Open questions I'm carrying
 
-- [ ] `sqflite` vs `drift` — decide Wk1 D1, note reason:
-- [ ] CRDT library choice — Wk4 D4. **Semantics settled; don't reopen them.**
-- [ ] `displayLifetime` defaults for hazard and resource — named constants until real data
-- [ ] Clock-drift tolerance width — depends on A's Wk4 D4 measurement
-- [ ] Retention window before archived claims purge — Wk5 D1
-- [ ] Do we build encrypted identity backup, accepting the theft risk? — team call
+- [ ] `sqflite` vs `drift` — decide day 1, note reason:
+- [ ] CRDT library choice. Semantics settled; library is not. **Don't reopen the semantics.**
+- [ ] `displayLifetime` defaults for hazard and resource — TBD, leave as named constants
+- [ ] Clock-drift tolerance width — depends on A's and real-hardware drift data
 
-### Encoded claim sizes (fill before the Wk1 sync, revise Wk2 D1)
+### Encoded claim sizes (fill in before the week 1 sync)
 
-| Claim type | CBOR size | Largest field | Under budget? |
-|---|---|---|---|
-| SOS | | | |
-| SOS_PROXY | | | |
-| HAZARD_REPORT | | | |
-| RESOURCE | | | |
-| **Budget** | **≤ 400 bytes** | | |
-
-### Invariant audit (Wk5 D5)
-
-| Invariant | Verified in code | Notes |
+| Claim type | CBOR size (bytes) | Largest field |
 |---|---|---|
-| SOS IDs unique, never merge | ☐ | |
-| Two separate ID functions | ☐ | |
-| No timestamp in any claim ID | ☐ | |
-| Relay never counts as corroboration | ☐ | |
-| Anti-echo rule enforced | ☐ | |
-| `displayLifetime` null for SOS | ☐ | |
-| `autoExpired` impossible for SOS | ☐ | |
-| Counters add-only, availability computed | ☐ | |
-| Claims signed, never encrypted | ☐ | |
-| Trust and priority separate | ☐ | |
-| No server/sync/connectivity reference | ☐ | |
+| SOS | | |
+| SOS_PROXY | | |
+| HAZARD_REPORT | | |
+| RESOURCE | | |
+| **Budget** | **≤ 400** | per `CLAIM_SCHEMA.md` §9.2 |
