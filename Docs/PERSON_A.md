@@ -40,8 +40,8 @@ If BLE mesh turns out to be painful on our test devices, everyone needs to know 
 
 ### Day 1–2 — Two phones talking
 
-- [ ] New scratch Flutter project, `flutter_blue_plus` (or `flutter_reactive_ble` — pick one, note why)
-- [ ] Android BLE permissions sorted (`BLUETOOTH_SCAN`, `BLUETOOTH_ADVERTISE`, `BLUETOOTH_CONNECT`, location permission on older API levels)
+- [x] New scratch Flutter project — `spike/phase0_ble_mesh/`. Package: **`bluetooth_low_energy`**, *not* `flutter_blue_plus`; see §9 open questions for why
+- [ ] Android BLE permissions sorted (`BLUETOOTH_SCAN`, `BLUETOOTH_ADVERTISE`, `BLUETOOTH_CONNECT`, location permission on older API levels) — manifest block written, needs a real device to verify
 - [ ] Phone 1 advertises a custom service UUID
 - [ ] Phone 2 scans and discovers it
 - [ ] Connect, write a hardcoded string over a GATT characteristic
@@ -72,7 +72,7 @@ Real numbers, written down. Rough is fine; absent is not.
 
 ### Day 5 — Write it up + the size question
 
-- [ ] One-page findings doc: `docs/PHASE0_MESH_FINDINGS.md`
+- [ ] One-page findings doc: `Docs/PHASE0_MESH_FINDINGS.md` (skeleton created; numbers pending). *Path corrected from `docs/` — repo uses `Docs/`.*
 - [ ] Recommendation: **is Wi-Fi Direct needed for MVP, or is BLE alone enough?**
 - [ ] **Take the max payload number to B before the week 1 sync.** `CLAIM_SCHEMA.md` §9.2 assumes ≤400 bytes fits in one write. If my measured number is lower, the schema has to change, and that's a three-person conversation.
 
@@ -159,7 +159,7 @@ Update after each work session. Keep it short — this is for the team sync, not
 
 | Date | Branch | What landed | Blocked on / notes |
 |---|---|---|---|
-| | | | |
+| 2026-08-18 | `a/ble-mesh-spike` | Spike scaffold: `spike/phase0_ble_mesh/` (pubspec, `main.dart` covering advertise + scan + write + relay + payload probe, README with test protocol). `Docs/PHASE0_MESH_FINDINGS.md` skeleton. Package decision made. | **Blocked: Flutter SDK not installed on this machine.** Android SDK + JDK are present, `adb` sees 0 devices. Nothing is compiled or run yet — `main.dart` has not been through `flutter analyze`. |
 | | | | |
 | | | | |
 
@@ -168,7 +168,7 @@ Update after each work session. Keep it short — this is for the team sync, not
 - [ ] `hopLimit` default per message type — **TBD pending my Phase 0 range data.** Don't let anyone pick a number before that lands.
 - [ ] Is Wi-Fi Direct needed for MVP at all? — Phase 0 answers this
 - [ ] Does flood routing cause broadcast storms at relief-camp density (hundreds of phones)? — needs a later, bigger test than I can run in week 1
-- [ ] `flutter_blue_plus` vs `flutter_reactive_ble` — decide day 1, note the reason here:
+- [x] `flutter_blue_plus` vs `flutter_reactive_ble` — **neither.** Both are BLE *central-role only*: they scan and connect, they cannot advertise. A mesh node has to be peripheral **and** central simultaneously, or nobody can find anybody. `flutter_ble_peripheral` advertises but exposes no GATT server, so there is no writable characteristic to be written into — pairing it with `flutter_blue_plus` still doesn't close the loop. **Decided: `bluetooth_low_energy` ^6.2.1**, which does both roles including a GATT server with write callbacks. Trade-off: smaller user base than `flutter_blue_plus`. Fallback if it misbehaves on our devices is a hand-written Android platform channel over `BluetoothGattServer`.
 
 ### Phase 0 findings (fill in day 5)
 

@@ -1,0 +1,17 @@
+# Everything `flutter create` generates. Only the files that carry a
+# decision are committed: pubspec.yaml, lib/main.dart, README.md.
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+build/
+android/
+ios/
+linux/
+macos/
+windows/
+web/
+test/
+analysis_options.yaml
+*.iml
+.idea/

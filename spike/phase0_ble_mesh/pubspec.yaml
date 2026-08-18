@@ -1,0 +1,28 @@
+name: phase0_ble_mesh
+description: >-
+  Phase 0 BLE mesh spike. THROWAWAY. Not part of the MayDay app.
+  Answers one question: can our phones find each other and pass a message
+  over BLE, including multi-hop? See spike/phase0_ble_mesh/README.md.
+publish_to: none
+version: 0.0.1
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # One package, both BLE roles. See README "Package choice" for why this
+  # is not flutter_blue_plus: every mesh node must be central AND peripheral
+  # at the same time, and flutter_blue_plus is central-only.
+  bluetooth_low_energy: ^6.2.1
+
+  # Runtime permission prompts for Android 12+ BLE permissions.
+  permission_handler: ^11.3.1
+
+dev_dependencies:
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
