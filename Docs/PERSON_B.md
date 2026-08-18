@@ -48,13 +48,15 @@ By end of week 1, unit tests should prove the trust engine behaves correctly *be
 - [x] Assert: `ResolutionMethod.autoExpired` is impossible for SOS types
 
 ### Day 2 — The two ID paths *(the critical day)*
-- [ ] `sosClaimId(deviceId, sequence)` — unique, never merges
-- [ ] `mergeableClaimId(type, geohashBucket)` — merging is the goal
-- [ ] **Two separate functions in two separate places.** Not one function with a type branch.
-- [ ] A comment on each pointing to `CLAIM_SCHEMA.md` §2, explaining *why* they're separate
-- [ ] Per-device monotonic sequence counter that never resets
-- [ ] 7-char geohash bucketing (~150m)
-- [ ] **No timestamp anywhere in either formula**
+
+- [x] `sosClaimId(deviceId, sequence)` — unique, never merges
+- [x] `mergeableClaimId(type, geohashBucket)` — merging is the goal
+- [x] **Two separate functions in two separate places.** Not one function with a type branch.
+- [x] A comment on each pointing to `CLAIM_SCHEMA.md` §2, explaining *why* they're separate
+- [x] Per-device monotonic sequence counter that never resets
+- [x] Geohash bucketing at 7 chars (~150m)
+- [x] **No timestamp anywhere in either formula** (§2.4)
+
 
 **Write this test before anything else:**
 ```
@@ -325,7 +327,7 @@ Update after each work session. Short entries — this is for the team sync.
 | Date | Branch | What landed | Blocked on / notes |
 |---|---|---|---|
 | Day 1 | `b/claim-schema` | SQLite setup + models | Selected `sqflite` over `drift` to execute raw schema precisely |
-| | | | |
+| Day 2 | `b/claim-schema` | ID paths + critical test | `dart_geohash` for bucketing, `shared_preferences` for counter |
 | | | | |
 
 ### Open questions I'm carrying
