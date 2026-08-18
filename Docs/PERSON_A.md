@@ -41,12 +41,12 @@ If BLE mesh turns out to be painful on our test devices, everyone needs to know 
 ### Day 1–2 — Two phones talking
 
 - [x] New scratch Flutter project — `spike/phase0_ble_mesh/`. Package: **`bluetooth_low_energy`**, *not* `flutter_blue_plus`; see §9 open questions for why
-- [ ] Android BLE permissions sorted (`BLUETOOTH_SCAN`, `BLUETOOTH_ADVERTISE`, `BLUETOOTH_CONNECT`, location permission on older API levels) — manifest block written, needs a real device to verify
-- [ ] Phone 1 advertises a custom service UUID
-- [ ] Phone 2 scans and discovers it
-- [ ] Connect, write a hardcoded string over a GATT characteristic
-- [ ] Phone 2 displays the received string on screen
-- [ ] **Both directions** — each phone can be sender and receiver
+- [x] Android BLE permissions sorted — manifest block in place; fixed a real bug where the spike unconditionally requested `locationWhenInUse` and treated any denial as fatal, when it's correctly unrequestable on API 31+ (manifest declares it `maxSdkVersion=30`, matching the `neverForLocation` flag on `BLUETOOTH_SCAN`). Verified clean on a real API 33 device
+- [x] Phone 1 advertises a custom service UUID — confirmed via `BluetoothGattServer addService()`/`onServiceAdded() status=0`
+- [x] Phone 2 scans and discovers it — `FOUND` fired, 245ms on the one clean-methodology sample (advertiser already live before scan started)
+- [x] Connect, write a hardcoded string over a GATT characteristic — `20B OK` write confirmed on real hardware
+- [x] Phone 2 displays the received string on screen — confirmed by direct observation on phone B
+- [x] **Both directions** — A→B and B→A both confirmed. Bonus: de-dup cache also verified working (A correctly dropped its own message after B relayed it back — `RX dup A-0 — dropped, not relayed`)
 
 **Gotcha to expect:** Android 12+ permission model for BLE is genuinely fiddly and the plugin docs lag behind. Budget time for this; it is not a sign anything is wrong.
 
@@ -65,14 +65,14 @@ Real numbers, written down. Rough is fine; absent is not.
 
 - [ ] Effective range indoors (through walls) — metres
 - [ ] Effective range outdoors, line of sight — metres
-- [ ] Time from advertising start to discovery — seconds, best and worst of ~10 tries
+- [~] Time from advertising start to discovery — 1 clean sample (245ms), need 9 more for a real best/worst-of-10. **Methodology fix applied:** advertise on both phones first, confirm both show "advertising as X," *then* start scanning — an earlier 5.8s reading was contaminated by human button-tapping lag, not radio latency; discarded, see `spike/phase0_ble_mesh/PHASE0_MESH_FINDINGS.md` §2
 - [ ] Battery drain: 1 hour of continuous scanning, % consumed, note the device model
 - [ ] Same over 1 hour of **duty-cycled** scanning (10s on / 50s off) — this is what we'll actually ship
-- [ ] Max payload size that reliably writes in one go
+- [ ] Max payload size that reliably writes in one go — buttons wired (Probe 400B / 512B), not yet run
 
 ### Day 5 — Write it up + the size question
 
-- [ ] One-page findings doc: `Docs/PHASE0_MESH_FINDINGS.md` (skeleton created; numbers pending). *Path corrected from `docs/` — repo uses `Docs/`.*
+- [ ] One-page findings doc: `spike/phase0_ble_mesh/PHASE0_MESH_FINDINGS.md` (skeleton created; numbers pending). *Lives inside the spike folder, not the shared `Docs/` — this is throwaway, A-owned working material, not a team-facing doc like `CLAIM_SCHEMA.md`.*
 - [ ] Recommendation: **is Wi-Fi Direct needed for MVP, or is BLE alone enough?**
 - [ ] **Take the max payload number to B before the week 1 sync.** `CLAIM_SCHEMA.md` §9.2 assumes ≤400 bytes fits in one write. If my measured number is lower, the schema has to change, and that's a three-person conversation.
 
@@ -159,8 +159,8 @@ Update after each work session. Keep it short — this is for the team sync, not
 
 | Date | Branch | What landed | Blocked on / notes |
 |---|---|---|---|
-| 2026-08-18 | `a/ble-mesh-spike` | Spike scaffold: `spike/phase0_ble_mesh/` (pubspec, `main.dart` covering advertise + scan + write + relay + payload probe, README with test protocol). `Docs/PHASE0_MESH_FINDINGS.md` skeleton. Package decision made. | **Blocked: Flutter SDK not installed on this machine.** Android SDK + JDK are present, `adb` sees 0 devices. Nothing is compiled or run yet — `main.dart` has not been through `flutter analyze`. |
-| | | | |
+| 2026-08-18 | `a/ble-mesh-spike` | Spike scaffold: `spike/phase0_ble_mesh/` (pubspec, `main.dart` covering advertise + scan + write + relay + payload probe, README with test protocol). `spike/phase0_ble_mesh/PHASE0_MESH_FINDINGS.md` skeleton (later moved out of `Docs/` into the spike folder — see 2026-08-18 entry below). Package decision made. | **Blocked: Flutter SDK not installed on this machine.** Android SDK + JDK are present, `adb` sees 0 devices. Nothing is compiled or run yet — `main.dart` has not been through `flutter analyze`. |
+| 2026-08-18 | `a/ble-mesh-spike` | Flutter SDK installed (`D:\Applications\flutter`), Android cmdline-tools installed via Android Studio, JDK pointed at Studio's bundled JBR 21. `flutter analyze` clean after fixing two real bugs: (1) `respondWriteRequest` was called with an extra `central` arg that doesn't exist in `bluetooth_low_energy` 6.2.1 — it's `respondWriteRequest(GATTWriteRequest request)`, single-arg; (2) permission logic unconditionally requested `locationWhenInUse` and treated denial as fatal — wrong on API 31+, where it's correctly ungrantable per the manifest's `maxSdkVersion=30` + `BLUETOOTH_SCAN` `neverForLocation`. Deleted boilerplate `test/widget_test.dart` (referenced a nonexistent `MyApp`; spike has no automated tests by design). Added Android 12+ permission block to the generated manifest. Worked around a Windows cross-drive Kotlin incremental-compiler bug (project on D:, pub cache on C: — `kotlin.incremental=false` in `android/gradle.properties`, spike-only). **Day 1–2 complete on real hardware:** both phones (M2101K7BI ×2, Android 13/API 33) advertise, discover (245ms clean sample), write, and receive in both directions; de-dup cache confirmed working. | Day 3 (multi-hop) blocked on a third phone. Day 4 measurements mostly outstanding — only 1 discovery sample so far. |
 | | | | |
 
 ### Open questions I'm carrying

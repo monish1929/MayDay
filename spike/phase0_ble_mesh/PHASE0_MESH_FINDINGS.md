@@ -45,13 +45,23 @@ fragmentation feature.
 |---|---|---|
 | Range, indoors through walls | | |
 | Range, outdoors line of sight | | |
-| Discovery time, best of 10 | | |
+| Discovery time, best of 10 | 245ms (1 sample, not yet a real best-of-10) | B scanning for A, A already advertising. Same room, both M2101K7BI |
 | Discovery time, worst of 10 | | |
 | Battery, 1 hr continuous scan | | |
 | Battery, 1 hr duty-cycled 10s/50s | | |
 | Negotiated ATT MTU | | |
 | Max single-write payload | | |
 | Multi-hop relay works? | | |
+
+**Methodology note:** the first attempt (A scanning for B, both buttons tapped
+manually and staggered) read 5.8s — that number is contaminated by human
+button-tapping lag between starting A's scan and starting B's advertise, not
+radio discovery latency. Discard it. **For every real measurement: tap
+Advertise on both phones first, confirm both show "advertising as X" on
+screen, then start Scan** — only then does the timer measure the radio, not
+you. The 245ms figure above is the first sample taken this way (B scanning
+while A was already advertising) and is the one to trust; it still needs 9
+more runs to be a real best/worst-of-10.
 
 Devices under test:
 

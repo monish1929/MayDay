@@ -10,7 +10,9 @@ It exists to answer four questions with evidence:
 3. What does continuous vs duty-cycled scanning cost in battery?
 4. How many bytes fit in one write?
 
-Findings go to `Docs/PHASE0_MESH_FINDINGS.md` and into the table at the bottom
+Findings go to `PHASE0_MESH_FINDINGS.md` in this same folder — not the shared
+`Docs/`, since this is throwaway working material specific to A's track, not
+a team-facing doc like `CLAIM_SCHEMA.md` — and into the table at the bottom
 of `Docs/PERSON_A.md`.
 
 ---
