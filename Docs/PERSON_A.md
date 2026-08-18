@@ -40,13 +40,13 @@ If BLE mesh turns out to be painful on our test devices, everyone needs to know 
 
 ### Day 1–2 — Two phones talking
 
-- [x] New scratch Flutter project — `spike/phase0_ble_mesh/`. Package: **`bluetooth_low_energy`**, *not* `flutter_blue_plus`; see §9 open questions for why
-- [x] Android BLE permissions sorted — manifest block in place; fixed a real bug where the spike unconditionally requested `locationWhenInUse` and treated any denial as fatal, when it's correctly unrequestable on API 31+ (manifest declares it `maxSdkVersion=30`, matching the `neverForLocation` flag on `BLUETOOTH_SCAN`). Verified clean on a real API 33 device
-- [x] Phone 1 advertises a custom service UUID — confirmed via `BluetoothGattServer addService()`/`onServiceAdded() status=0`
-- [x] Phone 2 scans and discovers it — `FOUND` fired, 245ms on the one clean-methodology sample (advertiser already live before scan started)
-- [x] Connect, write a hardcoded string over a GATT characteristic — `20B OK` write confirmed on real hardware
-- [x] Phone 2 displays the received string on screen — confirmed by direct observation on phone B
-- [x] **Both directions** — A→B and B→A both confirmed. Bonus: de-dup cache also verified working (A correctly dropped its own message after B relayed it back — `RX dup A-0 — dropped, not relayed`)
+- ✅ New scratch Flutter project — `spike/phase0_ble_mesh/`. Package: **`bluetooth_low_energy`**, *not* `flutter_blue_plus`; see §9 open questions for why
+- ✅ Android BLE permissions sorted — manifest block in place; fixed a real bug where the spike unconditionally requested `locationWhenInUse` and treated any denial as fatal, when it's correctly unrequestable on API 31+ (manifest declares it `maxSdkVersion=30`, matching the `neverForLocation` flag on `BLUETOOTH_SCAN`). Verified clean on a real API 33 device
+- ✅ Phone 1 advertises a custom service UUID — confirmed via `BluetoothGattServer addService()`/`onServiceAdded() status=0`
+- ✅ Phone 2 scans and discovers it — `FOUND` fired, 245ms on the one clean-methodology sample (advertiser already live before scan started)
+- ✅ Connect, write a hardcoded string over a GATT characteristic — `20B OK` write confirmed on real hardware
+- ✅ Phone 2 displays the received string on screen — confirmed by direct observation on phone B
+- ✅ **Both directions** — A→B and B→A both confirmed. Bonus: de-dup cache also verified working (A correctly dropped its own message after B relayed it back — `RX dup A-0 — dropped, not relayed`)
 
 **Gotcha to expect:** Android 12+ permission model for BLE is genuinely fiddly and the plugin docs lag behind. Budget time for this; it is not a sign anything is wrong.
 
