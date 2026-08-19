@@ -469,6 +469,32 @@ class _SpikeHomeState extends State<SpikeHome> {
     await _writeToAllPeers(body, label: 'probe ${bytes}B', requestMtu: true);
   }
 
+  /// One connect -> (optional MTU) -> discover -> write attempt against a
+  /// single peer. Extracted purely so the whole chain can be wrapped in one
+  /// `.timeout(...)` call in _writeToAllPeers.
+  Future<void> _writeOnce(
+    Peripheral peer,
+    Uint8List body, {
+    required bool requestMtu,
+  }) async {
+    await _central.connect(peer);
+    if (requestMtu) {
+      final int mtu = await _central.requestMTU(peer, mtu: 517);
+      _say('     negotiated mtu=$mtu with ${peer.uuid}');
+    }
+    final List<GATTService> services = await _central.discoverGATT(peer);
+    final GATTCharacteristic target = services
+        .firstWhere((GATTService s) => s.uuid == kServiceUuid)
+        .characteristics
+        .firstWhere((GATTCharacteristic c) => c.uuid == kMessageCharUuid);
+    await _central.writeCharacteristic(
+      peer,
+      target,
+      value: body,
+      type: GATTCharacteristicWriteType.withResponse,
+    );
+  }
+
   Future<void> _writeToAllPeers(
     Uint8List body, {
     required String label,
@@ -478,32 +504,28 @@ class _SpikeHomeState extends State<SpikeHome> {
       final String key = entry.key;
       final Peripheral peer = entry.value;
       if (_busyPeers.contains(key)) {
-        // The ping heartbeat is mid-connection to this exact peer right
-        // now. Don't race it — see _busyPeers' doc comment for why that
-        // crashed the plugin on real hardware. Just skip; tap again.
-        _say('     -> $label SKIPPED ${peer.uuid} (ping in flight, retry)');
+        // Another write is already mid-connection to this exact peer.
+        // Don't race it — see _busyPeers' doc comment for why that crashed
+        // the plugin on real hardware. Just skip; tap again.
+        _say('     -> $label SKIPPED ${peer.uuid} (write in flight, retry)');
         continue;
       }
       _busyPeers.add(key);
       try {
-        await _central.connect(peer);
-        if (requestMtu) {
-          final int mtu = await _central.requestMTU(peer, mtu: 517);
-          _say('     negotiated mtu=$mtu with ${peer.uuid}');
-        }
-        final List<GATTService> services = await _central.discoverGATT(peer);
-        final GATTCharacteristic target = services
-            .firstWhere((GATTService s) => s.uuid == kServiceUuid)
-            .characteristics
-            .firstWhere((GATTCharacteristic c) => c.uuid == kMessageCharUuid);
-
-        await _central.writeCharacteristic(
-          peer,
-          target,
-          value: body,
-          type: GATTCharacteristicWriteType.withResponse,
-        );
+        // Timeout is load-bearing, not decoration — confirmed on real
+        // hardware at the edge of range: connect() can hang for 30+
+        // seconds instead of failing fast, silently blocking every
+        // subsequent Send/Probe tap on this peer (they SKIP, not queue)
+        // for the whole hang. See PHASE0_MESH_FINDINGS.md's range-edge log.
+        await _writeOnce(peer, body, requestMtu: requestMtu)
+            .timeout(const Duration(seconds: 8));
         _say('     -> $label OK to ${peer.uuid}');
+      } on TimeoutException {
+        // Distinguished from a fast failure deliberately: at the range
+        // edge, status-133 connect failures showed up in well under a
+        // second, so "timed out" vs "failed fast" is itself a data point
+        // worth telling apart when reading Day 4 results.
+        _say('     -> $label TIMED OUT to ${peer.uuid} (>8s, no response)');
       } catch (e) {
         _say('     -> $label FAILED to ${peer.uuid}: $e');
       } finally {

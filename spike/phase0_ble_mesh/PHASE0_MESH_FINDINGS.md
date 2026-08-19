@@ -44,7 +44,7 @@ fragmentation feature.
 | Measurement | Result | Device / conditions |
 |---|---|---|
 | Range, indoors through walls | | |
-| Range, outdoors line of sight | | |
+| Range, outdoors line of sight | Discovery still working (intermittently) at ~40m; writes already failing (status 133) at that distance — see §10. **Not an official measurement**, informal check | Redmi + OPPO, open pathway, no walls, light foot traffic. Medium TX power (pre-§9 patch) |
 | Discovery time, best of 10 | 245ms (1 sample, not yet a real best-of-10) | B scanning for A, A already advertising. Same room, both M2101K7BI |
 | Discovery time, worst of 10 | | |
 | Battery, 1 hr continuous scan | | |
@@ -344,3 +344,77 @@ for mesh connectivity in the field, TX power is a real, currently-untapped
 lever — and the fact that the chosen dependency doesn't expose it through
 its public API is itself a data point for the "is this the right transport
 library" question raised in §5.
+
+
+---
+
+## 10. First real outdoor range data point — and the bug it exposed
+
+**Not an official Day 4 measurement — recorded here as informal evidence,
+per the same standard as everything else in this doc.** Redmi and OPPO,
+open pathway, no walls, some people walking through (mild crowding).
+Unpatched build — medium TX power (§9), pre-write-timeout fix (below).
+
+### What the RSSI trend shows
+
+```
+15:04:40  FOUND B  rssi=-48        <- close together at start
+15:05:02  rssi=-86
+15:05:41  rssi=-95
+15:06:07  rssi=-92
+15:06:54  rssi=-78
+15:07:40  rssi=-97
+```
+
+Repeated `"back in range"` transitions (not one steady green period) between
+these means advertisement reception itself kept dropping for >4s stretches
+at ~40m and then recovering — this is the edge of the discovery boundary,
+not comfortably inside it. RSSI mostly -85 to -97 matches "about to drop"
+per general BLE guidance, consistent with being right at the range limit
+rather than well within it.
+
+### The write failure — and what it confirms
+
+```
+FAILED ... IllegalStateException: Connect failed with status: 133
+```
+
+Status 133 is Android's generic GATT connection failure, commonly triggered
+by attempting to *connect* (not just passively receive an advertisement) at
+marginal signal strength. This is the first empirical confirmation of a
+caveat stated when liveness moved to advertisement-based tracking: **write
+range is shorter than discovery range.** Adverts were still (barely)
+arriving at -92 dBm; the GATT connect a real Send needs failed outright at
+that same distance.
+
+### The bug this exposed: no timeout on the manual write path
+
+```
+15:06:26.808  TX "hello from A" to 1 peer(s)     <- no result line ever printed
+15:06:27.456  TX "hello from A" to 1 peer(s)
+15:06:27.456       -> SKIPPED (write in flight, retry)
+15:06:35.886  TX "hello from A" to 1 peer(s)
+15:06:35.886       -> SKIPPED (write in flight, retry)
+15:06:56.849       -> FAILED ... status: 133      <- presumably the 26.808 attempt
+```
+
+`connect()` from 15:06:26.808 didn't fail — it hung for roughly 30 seconds,
+holding `_busyPeers` locked the whole time and silently skipping two more
+Send taps. `_writeToAllPeers` had a timeout on `disconnect()` (added earlier
+for a different reason) but never on the `connect -> discoverGATT -> write`
+chain itself — the exact class of bug already fixed for the advertising
+path and the (now-removed) ping heartbeat, just never applied here.
+
+**Fixed:** `.timeout(8s)` around the whole write attempt, with a distinct
+`TIMED OUT` log line separate from `FAILED` — worth distinguishing, since
+the status-133 failures above returned in well under a second. "Timed out"
+vs "failed fast" is itself a signal worth reading separately once Day 4
+range testing starts producing failures near the boundary.
+
+### What to actually do with this at Day 4
+
+Confirms the write-range check in the README's range protocol (Send/Probe,
+not just Scan restart) is the right one — discovery alone would have shown
+this as "still findable" well past where writes actually work. Record range
+as two numbers, not one: discovery boundary and write boundary. They will
+not be the same distance.
