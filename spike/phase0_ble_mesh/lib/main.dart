@@ -17,6 +17,7 @@ import 'dart:typed_data';
 
 import 'package:bluetooth_low_energy/bluetooth_low_energy.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:permission_handler/permission_handler.dart';
 
 /// Custom service every spike node advertises and scans for.
@@ -177,6 +178,23 @@ class _SpikeHomeState extends State<SpikeHome> {
     debugPrint('[SPIKE] $message');
     if (!mounted) return;
     setState(() => _log.insert(0, LogLine(message)));
+  }
+
+  /// Copies the whole on-screen log, oldest-first (so it reads top-to-bottom
+  /// like a transcript, unlike the newest-first on-screen list), with
+  /// timestamps. Exists because transcribing a multi-line stack trace off a
+  /// phone screen by hand — or screenshotting it — is exactly the kind of
+  /// friction that shouldn't exist in debugging tooling.
+  void _copyLogToClipboard() {
+    final String text = _log.reversed
+        .map((LogLine l) =>
+            '${l.at.hour.toString().padLeft(2, '0')}:'
+            '${l.at.minute.toString().padLeft(2, '0')}:'
+            '${l.at.second.toString().padLeft(2, '0')}.'
+            '${l.at.millisecond.toString().padLeft(3, '0')}  ${l.text}')
+        .join('\n');
+    Clipboard.setData(ClipboardData(text: text));
+    _say('log copied to clipboard (${_log.length} lines)');
   }
 
   Future<void> _setUp() async {
@@ -610,24 +628,44 @@ class _SpikeHomeState extends State<SpikeHome> {
             value: _relayEnabled,
             onChanged: (bool v) => setState(() => _relayEnabled = v),
           ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: <Widget>[
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: Text('Log (${_log.length})',
+                    style: Theme.of(context).textTheme.labelMedium),
+              ),
+              TextButton.icon(
+                onPressed: _log.isEmpty ? null : _copyLogToClipboard,
+                icon: const Icon(Icons.copy, size: 16),
+                label: const Text('Copy log'),
+              ),
+            ],
+          ),
           const Divider(height: 1),
           Expanded(
-            child: ListView.builder(
-              itemCount: _log.length,
-              itemBuilder: (BuildContext context, int i) {
-                final LogLine line = _log[i];
-                return ListTile(
-                  dense: true,
-                  title: Text(line.text,
-                      style: const TextStyle(fontFamily: 'monospace')),
-                  trailing: Text(
-                    '${line.at.minute.toString().padLeft(2, '0')}:'
-                    '${line.at.second.toString().padLeft(2, '0')}.'
-                    '${line.at.millisecond.toString().padLeft(3, '0')}',
-                    style: const TextStyle(fontSize: 11),
-                  ),
-                );
-              },
+            // Long-press-drag-to-select across lines, in addition to the
+            // Copy log button — useful for grabbing just one error line
+            // without the whole log.
+            child: SelectionArea(
+              child: ListView.builder(
+                itemCount: _log.length,
+                itemBuilder: (BuildContext context, int i) {
+                  final LogLine line = _log[i];
+                  return ListTile(
+                    dense: true,
+                    title: SelectableText(line.text,
+                        style: const TextStyle(fontFamily: 'monospace')),
+                    trailing: Text(
+                      '${line.at.minute.toString().padLeft(2, '0')}:'
+                      '${line.at.second.toString().padLeft(2, '0')}.'
+                      '${line.at.millisecond.toString().padLeft(3, '0')}',
+                      style: const TextStyle(fontSize: 11),
+                    ),
+                  );
+                },
+              ),
             ),
           ),
         ],
