@@ -273,9 +273,18 @@ seconds hit the per-process cap for real. Every attempt then failed *before
 reaching the peer* — indistinguishable from "unreachable" in app-level logs,
 but actually a local resource-table problem, not radio or range.
 
-**Mitigation applied:** ping interval widened 4s to 12s. A mitigation, not a
-fix — the registration-per-call behaviour is inside the plugin. Recovery once
-capped: force-close and relaunch (releases the registrations).
+**Mitigation applied at the time:** ping interval widened 4s to 12s. A
+mitigation, not a fix — the registration-per-call behaviour is inside the
+plugin. Recovery once capped: force-close and relaunch (releases the
+registrations).
+
+**Superseded, not just mitigated.** The connect-based ping heartbeat this
+section describes was later removed entirely and replaced with liveness
+derived from advertisement reception (zero connections, so this failure mode
+no longer applies to liveness tracking at all). The registration-exhaustion
+mechanism itself is still real and still applies to manual Send/Probe under
+heavy connection churn — the analysis above stands — but the specific
+heartbeat that triggered it here is gone.
 
 **Why this is not a footnote:** `Docs/PERSON_A.md` §9 flags *"does flood
 routing cause broadcast storms at relief-camp density (hundreds of phones)?"*
@@ -286,3 +295,52 @@ Phase 2 needs either connection pooling (reuse one client, don't churn) or
 hard rate-limiting on connection attempts — and must distinguish "peer
 unreachable" from "local resource exhausted", because the real corroboration
 and relay logic will otherwise draw wrong conclusions from a failed send.
+
+
+---
+
+## 9. Advertising TX power is capped at MEDIUM, and the public API cannot change it
+
+**Not something in this spike's code — a gap in the plugin itself.**
+
+The Android platform layer of `bluetooth_low_energy` supports TX power
+selection internally:
+
+```dart
+enum TXPowerLevelArgs { ultraLow, low, medium, high }
+```
+
+But the **public, cross-platform API never exposes it.**
+`PeripheralManager.startAdvertising(Advertisement advertisement)` takes an
+`Advertisement`, which has no TX power field at all — and the plugin's own
+`peripheral_manager_impl.dart` never populates `txPowerLevelArgs` when
+building the native settings object, leaving it null. Android's own default
+then applies. Confirmed directly in the native log on every successful
+advertise in this spike:
+
+```
+D/BluetoothLeAdvertiser: TxPower == ADVERTISE_TX_POWER_MEDIUM
+```
+
+**Consequence for Day 4 range numbers:** whatever range this spike measures
+reflects **medium** transmit power, not the phone's hardware maximum. Any
+range figure recorded in §2 should be captioned with this — it is a
+measurement of "range at medium TX power on this plugin," not "the range
+this hardware can achieve." A production implementation using a patched
+plugin, a different plugin, or the hand-written platform-channel fallback
+already noted in §5 could plausibly do meaningfully better on range than
+anything Phase 0 records.
+
+**Not worth fixing in the spike.** Patching the plugin's Kotlin source to
+wire through `txPowerLevelArgs=high` is real engineering effort disproportionate
+to a throwaway measurement exercise, and the resulting number would then be
+specific to a hand-patched dependency nobody plans to ship. Better to record
+the caveat honestly (`CLAUDE.md` §9 — state limitations, don't paper over)
+than quietly measure a number that looks like a hardware ceiling but isn't
+one.
+
+**Worth carrying into Phase 2:** if range ever becomes the limiting factor
+for mesh connectivity in the field, TX power is a real, currently-untapped
+lever — and the fact that the chosen dependency doesn't expose it through
+its public API is itself a data point for the "is this the right transport
+library" question raised in §5.
