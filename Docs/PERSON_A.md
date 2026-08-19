@@ -63,12 +63,12 @@ If BLE mesh turns out to be painful on our test devices, everyone needs to know 
 
 Real numbers, written down. Rough is fine; absent is not.
 
-- [ ] Effective range indoors (through walls) — metres
-- [ ] Effective range outdoors, line of sight — metres
+- [✔] Effective range indoors (through walls) — **no write-range boundary found within the home**, all 4 test points inside <10m. RSSI -39 (near) to -94 (far corner, through wall+bathroom); writes incl. 512B probes mostly still succeeded at -94. The ~50 dB drop is wall attenuation, not distance — see `PHASE0_MESH_FINDINGS.md` §11
+- [~] Effective range outdoors, line of sight — informal check reached ~40m (discovery intermittent, writes already failing with status 133 at that distance). **Needs re-running:** that test predates the TX-power-HIGH patch, so it is a lower bound, not this build's real range. See `PHASE0_MESH_FINDINGS.md` §10
 - [~] Time from advertising start to discovery — 1 clean sample (245ms), need 9 more for a real best/worst-of-10. **Methodology fix applied:** advertise on both phones first, confirm both show "advertising as X," *then* start scanning — an earlier 5.8s reading was contaminated by human button-tapping lag, not radio latency; discarded, see `spike/phase0_ble_mesh/PHASE0_MESH_FINDINGS.md` §2
 - [ ] Battery drain: 1 hour of continuous scanning, % consumed, note the device model
 - [ ] Same over 1 hour of **duty-cycled** scanning (10s on / 50s off) — this is what we'll actually ship
-- [ ] Max payload size that reliably writes in one go — buttons wired (Probe 400B / 512B), not yet run
+- [✔] Max payload size that reliably writes in one go — **512B confirmed, repeatedly, both directions, even at RSSI -91.** Negotiated ATT MTU 517 (so ~514B is the hard protocol ceiling; 512 sits just under it). `CLAIM_SCHEMA.md` §9.2's ≤400B assumption **holds with headroom — no fragmentation needed.** See `PHASE0_MESH_FINDINGS.md` §11
 
 ### Day 5 — Write it up + the size question
 
