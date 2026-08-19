@@ -98,39 +98,48 @@ class _SpikeHomeState extends State<SpikeHome> {
   /// Without it, a three-phone flood echoes forever.
   final Set<String> _seenMsgIds = <String>{};
 
-  // ---- liveness heartbeat (day 4 range test) ----
+  // ---- liveness, from advertisements (day 4 range test) ----
   //
-  // Every write in this spike is connect -> write -> disconnect, one-shot —
-  // there is no persistent connection to notice dropping, so nothing told
-  // you "you just walked out of range" while it happened. This timer fixes
-  // that: it pings every known peer every couple of seconds and tracks the
-  // last time each one actually answered, so the UI can show live in-range
-  // / out-of-range status instead of you re-tapping Send at every checkpoint.
+  // REPLACED an earlier connect->write->disconnect "ping" heartbeat. That
+  // design was wrong twice over:
+  //   1. It caused the GATT client registration exhaustion in
+  //      PHASE0_MESH_FINDINGS.md §8 — every connect() registers a fresh
+  //      client, Android caps them per process, and 3 phones pinging each
+  //      other burned through the cap. Widening the interval only delayed it.
+  //   2. It measured the wrong thing anyway. A peer is "in range" for mesh
+  //      purposes when you can HEAR IT — advertisement reception is what
+  //      decides whether a mesh forms at all.
   //
-  // Deliberately NOT debounced — a single missed ping flips a peer to
-  // "lost" immediately. That is what you want when you're trying to find
-  // the exact spot range fails, not a smoothed-over average.
-  Timer? _pingTimer;
-  final Map<String, DateTime> _lastPingSuccess = <String, DateTime>{};
-  final Map<String, bool> _peerReachable = <String, bool>{};
+  // BLE peripherals advertise continuously (hundreds of ms apart), so as
+  // long as we are scanning, liveness arrives free: just record when each
+  // peer was last heard. No connections, no registrations, no radio churn,
+  // far less battery (which also stops us polluting the Day 4 battery
+  // numbers with our own instrumentation), and RSSI updates live as you walk.
+  //
+  // Caveat worth stating: this means "in range" == "I can hear its
+  // advertisements", NOT "I can complete a GATT write to it". Those differ
+  // at the margins — write range is usually shorter. Send / Probe are how
+  // you test writes; the chips are how you find the discovery boundary.
+  final Map<String, DateTime> _lastSeenAt = <String, DateTime>{};
+  final Map<String, int> _lastRssi = <String, int>{};
 
-  /// Per-peer connection lock, checked by BOTH the ping heartbeat AND
-  /// manual Send/Probe. This is load-bearing, not just anti-spam: the
-  /// bluetooth_low_energy_android plugin is not safe against two
-  /// concurrent connect() calls to the same peripheral — on real hardware
-  /// this threw `IllegalStateException: GATT is disconnected with status:
-  /// 0` deep in its connection-state handler when a manual Send raced a
-  /// background ping to the same peer. Whichever gets here first wins;
-  /// the other silently no-ops for that peer this cycle (manual Send just
-  /// logs "busy", ping just skips — both retry naturally next tick/tap).
+  /// A peer is shown as lost after this long with no advertisement. Advert
+  /// intervals are sub-second, so 4s is many missed adverts — long enough
+  /// not to flicker on a single dropped packet, short enough to pinpoint
+  /// where range actually ends while walking.
+  static const Duration kPeerStaleAfter = Duration(seconds: 4);
+
+  /// Repaints the "Ns ago" text between advertisements. UI only — liveness
+  /// itself comes from _lastSeenAt, not from this timer firing.
+  Timer? _uiTicker;
+
+  /// Per-peer connection lock for manual Send/Probe. Load-bearing, not just
+  /// anti-spam: the bluetooth_low_energy_android plugin is not safe against
+  /// two concurrent connect() calls to the same peripheral — on real
+  /// hardware that threw `IllegalStateException: GATT is disconnected with
+  /// status: 0` deep in its connection-state handler when two writes raced
+  /// to the same peer.
   final Set<String> _busyPeers = <String>{};
-
-  /// The wire-level ping payload — deliberately NOT a `_SpikeMessage`. If it
-  /// went through the normal parse path it would show up as an RX line (or
-  /// a relay!) on the receiving phone, flooding their screen with noise
-  /// every 2 seconds for a check they didn't ask for. `_onWriteRequest`
-  /// special-cases this exact payload and answers it silently.
-  static final Uint8List _pingPayload = Uint8List.fromList(utf8.encode('PING'));
 
   /// Set when discovery starts, so we can report time-to-first-discovery
   /// (Docs/PERSON_A.md §3, day 4 measurement).
@@ -154,7 +163,7 @@ class _SpikeHomeState extends State<SpikeHome> {
 
   @override
   void dispose() {
-    _pingTimer?.cancel();
+    _uiTicker?.cancel();
     for (final StreamSubscription<void> s in _subs) {
       s.cancel();
     }
@@ -208,20 +217,12 @@ class _SpikeHomeState extends State<SpikeHome> {
     _subs.add(_central.discovered.listen(_onDiscovered));
     _subs.add(_peripheral.characteristicWriteRequested.listen(_onWriteRequest));
 
-    // Runs for the app's whole lifetime; a no-op while _peers is empty.
-    // 12s, not 4s: every connect() the plugin makes registers a BRAND NEW
-    // GATT client identity rather than reusing one (confirmed by native
-    // logs — dozens of distinct client UUIDs, one per attempt, never
-    // reused). Android caps how many a process can hold concurrently; with
-    // 3 phones each pinging up to 2 peers every few seconds, that cap got
-    // hit for real — every registerApp() started failing with status=257
-    // (registration table full), which looks identical to "peer
-    // unreachable" but isn't a radio/range problem at all. This can't be
-    // fixed from here (the plugin owns the registration strategy); the
-    // only lever available is calling connect() less often. See
-    // PHASE0_MESH_FINDINGS.md §8.
-    _pingTimer = Timer.periodic(
-        const Duration(seconds: 12), (_) => _pingAllPeers());
+    // Repaint only — no radio work here. Liveness comes from advertisement
+    // reception in _onDiscovered; this just keeps the "Ns ago" text moving
+    // and flips chips to stale once kPeerStaleAfter elapses.
+    _uiTicker = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
 
     _say('ready — set node name, then Advertise + Scan');
   }
@@ -310,14 +311,6 @@ class _SpikeHomeState extends State<SpikeHome> {
 
   /// A message arrived over the air. This is the whole point of the spike.
   void _onWriteRequest(GATTCharacteristicWriteRequestedEventArgs args) {
-    // Heartbeat ping — answer and stop. See _pingPayload's doc comment for
-    // why this must never reach the normal parse/log/relay path below.
-    if (args.request.value.length == _pingPayload.length &&
-        utf8.decode(args.request.value, allowMalformed: true) == 'PING') {
-      _peripheral.respondWriteRequest(args.request);
-      return;
-    }
-
     final String raw = utf8.decode(args.request.value, allowMalformed: true);
     _peripheral.respondWriteRequest(args.request);
 
@@ -368,8 +361,8 @@ class _SpikeHomeState extends State<SpikeHome> {
       setState(() {
         _peers.clear();
         _peerNames.clear();
-        _lastPingSuccess.clear();
-        _peerReachable.clear();
+        _lastSeenAt.clear();
+        _lastRssi.clear();
         _busyPeers.clear();
       });
       _discoveryStartedAt = DateTime.now();
@@ -396,80 +389,39 @@ class _SpikeHomeState extends State<SpikeHome> {
 
   void _onDiscovered(DiscoveredEventArgs args) {
     final String key = args.peripheral.uuid.toString();
-    if (_peers.containsKey(key)) return;
-
-    final Duration? elapsed = _discoveryStartedAt == null
-        ? null
-        : DateTime.now().difference(_discoveryStartedAt!);
+    final bool isNew = !_peers.containsKey(key);
     final String label = _labelOf(args, key);
+
+    // EVERY advertisement updates liveness, not just the first. An earlier
+    // version early-returned here for known peers, which threw away exactly
+    // the signal the range test needs — see the _lastSeenAt comment block.
+    final bool wasStale = _isStale(key);
     setState(() {
       _peers[key] = args.peripheral;
       _peerNames[key] = label;
+      _lastSeenAt[key] = DateTime.now();
+      _lastRssi[key] = args.rssi;
     });
-    _say('FOUND $label  rssi=${args.rssi}'
-        '${elapsed == null ? '' : '  after ${elapsed.inMilliseconds}ms'}');
-  }
 
-  /// Heartbeat sweep — one ping per known peer, every 4s. Updates
-  /// _lastPingSuccess / _peerReachable for the status chips; logs only on a
-  /// reachable<->unreachable *transition*, not every tick, or the log would
-  /// be 100% ping noise within a minute.
-  Future<void> _pingAllPeers() async {
-    for (final MapEntry<String, Peripheral> entry in _peers.entries.toList()) {
-      final String key = entry.key;
-      if (_busyPeers.contains(key)) continue; // previous ping still in flight
-      _busyPeers.add(key);
-      try {
-        // Timeout is load-bearing, not decoration: without it, a connect()
-        // that hangs on real hardware (radio contention did this once —
-        // see PHASE0_MESH_FINDINGS.md) never throws, `_busyPeers` never
-        // clears, and this peer's status chip freezes forever, silently
-        // skipped by every future sweep. 3s < the 4s sweep interval, so a
-        // timed-out peer is eligible again next cycle instead of stacking.
-        await _pingOnce(entry.value).timeout(const Duration(seconds: 3));
-        _lastPingSuccess[key] = DateTime.now();
-        if (_peerReachable[key] != true) {
-          debugPrint('[SPIKE] ${_peerNames[key]} back in range');
-          _peerReachable[key] = true;
-        }
-      } catch (e) {
-        if (_peerReachable[key] != false) {
-          // The real error, not swallowed — the first "lost" on real
-          // hardware turned out to be BLE stack contention (continuous
-          // Scan + rapid connect/disconnect churn), not actual range loss.
-          // Without this line that took reading raw adb logcat to diagnose.
-          debugPrint('[SPIKE] ${_peerNames[key]} lost: $e');
-          _peerReachable[key] = false;
-        }
-      } finally {
-        // Best-effort — if connect() itself is what's hanging, disconnect()
-        // might hang too. Never let cleanup itself be the next freeze.
-        try {
-          await _central.disconnect(entry.value).timeout(
-              const Duration(seconds: 2));
-        } catch (_) {}
-        _busyPeers.remove(key);
-      }
+    if (isNew) {
+      final Duration? elapsed = _discoveryStartedAt == null
+          ? null
+          : DateTime.now().difference(_discoveryStartedAt!);
+      _say('FOUND $label  rssi=${args.rssi}'
+          '${elapsed == null ? '' : '  after ${elapsed.inMilliseconds}ms'}');
+    } else if (wasStale) {
+      // Only log the transition back, never every advertisement — otherwise
+      // the log is 100% liveness noise within seconds.
+      _say('$label back in range  rssi=${args.rssi}');
     }
-    if (mounted) setState(() {}); // refresh "Ns ago" even with no state change
   }
 
-  /// One connect -> discover -> write attempt against a single peer.
-  /// Extracted from _pingAllPeers purely so the whole chain can be wrapped
-  /// in one `.timeout(...)` call there.
-  Future<void> _pingOnce(Peripheral peer) async {
-    await _central.connect(peer);
-    final List<GATTService> services = await _central.discoverGATT(peer);
-    final GATTCharacteristic target = services
-        .firstWhere((GATTService s) => s.uuid == kServiceUuid)
-        .characteristics
-        .firstWhere((GATTCharacteristic c) => c.uuid == kMessageCharUuid);
-    await _central.writeCharacteristic(
-      peer,
-      target,
-      value: _pingPayload,
-      type: GATTCharacteristicWriteType.withResponse,
-    );
+  /// True when we have not heard an advertisement from this peer recently.
+  /// Also true for a peer we have never heard from at all.
+  bool _isStale(String key) {
+    final DateTime? seen = _lastSeenAt[key];
+    if (seen == null) return true;
+    return DateTime.now().difference(seen) > kPeerStaleAfter;
   }
 
   Future<void> _send() async {
@@ -547,27 +499,36 @@ class _SpikeHomeState extends State<SpikeHome> {
 
   // -------------------------------------------------------------------- ui
 
-  /// Live in-range/out-of-range chip for one peer. This is the thing to
-  /// watch while walking outdoors for the Day 4 range test — green means
-  /// the last heartbeat (within the last 2s cycle) succeeded, red means it
-  /// didn't. "Ns ago" keeps ticking even while red, so you can tell "just
-  /// lost it" from "lost it a while back and it's not coming back."
+  /// Live in-range chip for one peer — the thing to watch while walking the
+  /// Day 4 range test. Green means we heard an advertisement within
+  /// kPeerStaleAfter; red means we have not.
+  ///
+  /// RSSI is shown live because it is the *leading* indicator: it sags well
+  /// before the chip goes red, so you can see the edge of range approaching
+  /// rather than only noticing once you are past it. Rough guide on these
+  /// devices: -50s comfortable, -70s fine, -80s getting marginal, -90s about
+  /// to drop. Note RSSI is noisy — a body, a wall, or pocketing the phone
+  /// moves it 10+ dB — so treat it as a trend, not a distance readout.
   Widget _buildPeerStatusChip(String key) {
     final String name = _peerNames[key] ?? key;
-    final DateTime? lastSuccess = _lastPingSuccess[key];
-    final bool reachable = _peerReachable[key] ?? false;
-    final String agoText = lastSuccess == null
-        ? 'no contact yet'
-        : '${DateTime.now().difference(lastSuccess).inSeconds}s ago';
+    final DateTime? seen = _lastSeenAt[key];
+    final bool live = !_isStale(key);
+    final int? rssi = _lastRssi[key];
+
+    final String detail = seen == null
+        ? 'not heard yet'
+        : live
+            ? 'rssi ${rssi ?? '?'}'
+            : '${DateTime.now().difference(seen).inSeconds}s ago';
 
     return Chip(
       avatar: Icon(
-        reachable ? Icons.bluetooth_connected : Icons.bluetooth_disabled,
+        live ? Icons.bluetooth_connected : Icons.bluetooth_disabled,
         color: Colors.white,
         size: 18,
       ),
-      label: Text('$name — $agoText'),
-      backgroundColor: reachable ? Colors.green[700] : Colors.red[700],
+      label: Text('$name — $detail'),
+      backgroundColor: live ? Colors.green[700] : Colors.red[700],
       labelStyle: const TextStyle(color: Colors.white),
     );
   }
@@ -617,10 +578,29 @@ class _SpikeHomeState extends State<SpikeHome> {
           if (_peers.isNotEmpty)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              child: Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: _peers.keys.map(_buildPeerStatusChip).toList(),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: _peers.keys.map(_buildPeerStatusChip).toList(),
+                  ),
+                  // Load-bearing warning, not decoration: liveness is now
+                  // derived purely from advertisement reception, so with
+                  // scanning off every chip goes red regardless of whether
+                  // the peers are actually there.
+                  if (!_scanning)
+                    const Padding(
+                      padding: EdgeInsets.only(top: 8),
+                      child: Text(
+                        'Scanning is OFF — status below is stale. Liveness '
+                        'comes from hearing adverts, so keep Scan running '
+                        'during range tests.',
+                        style: TextStyle(fontSize: 12, color: Colors.red),
+                      ),
+                    ),
+                ],
               ),
             ),
           SwitchListTile(
