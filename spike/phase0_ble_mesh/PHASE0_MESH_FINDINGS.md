@@ -43,7 +43,7 @@ fragmentation feature.
 
 | Measurement | Result | Device / conditions |
 |---|---|---|
-| Range, indoors through walls | **Never found a hard write-range boundary inside the home.** RSSI -45 to -79 side-by-side with the stationary phone (asymmetric — see §11), -39/-41 a short distance away, -83/-84 through one wall+bathroom, -89 to -94 at the far corner (full width of home + a wall) — see §11. Writes (including 512B probes) mostly still succeeded even at -91 to -94; some `TIMED OUT` failures scattered across the range, not cleanly correlated with weak RSSI alone (one occurred at -41, strong signal) | 2 phones, labels A/B — physical models TBD, confirm which. TX-power-HIGH + write-timeout build. Closed doors throughout, one leg separated by a wall + bathroom |
+| Range, indoors through walls | **Never found a hard write-range boundary, over <10m total distance.** RSSI -45 to -79 side-by-side with the stationary phone (asymmetric — see §11), -39/-41 a short distance away, -83/-84 through one wall+bathroom, -89 to -94 at the far corner (full width of home + a wall) — see §11. Since all 4 points fit inside 10m, the ~50 dB drop is almost entirely wall/obstruction loss, not distance — says more about this home's wall construction than about BLE's raw range. Writes (including 512B probes) mostly still succeeded even at -91 to -94; some `TIMED OUT` failures scattered across the range, not cleanly correlated with weak RSSI alone (one occurred at -41, strong signal) | 2 phones, labels A/B — physical models TBD, confirm which. TX-power-HIGH + write-timeout build. Closed doors throughout, one leg separated by a wall + bathroom |
 | Range, outdoors line of sight | Discovery still working (intermittently) at ~40m; writes already failing (status 133) at that distance — see §10. **Not an official measurement**, informal check | Redmi + OPPO, open pathway, no walls, light foot traffic. Medium TX power (pre-§9 patch) |
 | Discovery time, best of 10 | 245ms (1 sample, not yet a real best-of-10) | B scanning for A, A already advertising. Same room, both M2101K7BI |
 | Discovery time, worst of 10 | | |
@@ -483,6 +483,17 @@ Both 400B and 512B probes **kept succeeding even at P3's weakest readings**
 useful result, not an incomplete test — it means this home's indoor
 footprint, even through a wall+bathroom and a full diagonal, stays inside
 usable BLE range on the current build.
+
+**Total physical distance covered: under 10m.** All four points fit inside
+that. Read correctly, this means the ~50 dB of signal loss observed (-39 at
+P1 down to -94 at P3) is almost entirely **wall/obstruction attenuation,
+not distance attenuation** — this run says little about BLE's raw open-air
+range (§10's outdoor test is the one that speaks to that) and a lot about
+how lossy this home's construction is (plausibly concrete/brick given the
+loss per wall, not just drywall). Framed that way, the result is stronger
+than it first reads: writes stayed mostly reliable at -94 through two solid
+obstructions inside under 10m — a good sign for a typical rural home's
+interior coverage, not a middling one.
 
 ### Honest caveat: write failures don't track RSSI cleanly
 
