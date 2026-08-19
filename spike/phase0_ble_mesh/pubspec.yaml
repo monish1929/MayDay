@@ -24,5 +24,14 @@ dependencies:
 dev_dependencies:
   flutter_lints: ^4.0.0
 
+# Spike-only patch — see vendor/bluetooth_low_energy_android and
+# PHASE0_MESH_FINDINGS.md §9. The published package never sets Android's
+# advertising TX power, defaulting to MEDIUM even though the native side
+# supports HIGH. Vendored copy adds that one field. Not a real fork; do not
+# carry this override into a real pubspec without a deliberate decision.
+dependency_overrides:
+  bluetooth_low_energy_android:
+    path: vendor/bluetooth_low_energy_android
+
 flutter:
   uses-material-design: true
