@@ -43,14 +43,14 @@ fragmentation feature.
 
 | Measurement | Result | Device / conditions |
 |---|---|---|
-| Range, indoors through walls | | |
+| Range, indoors through walls | **Never found a hard write-range boundary inside the home.** RSSI -45 to -79 side-by-side with the stationary phone (asymmetric — see §11), -39/-41 a short distance away, -83/-84 through one wall+bathroom, -89 to -94 at the far corner (full width of home + a wall) — see §11. Writes (including 512B probes) mostly still succeeded even at -91 to -94; some `TIMED OUT` failures scattered across the range, not cleanly correlated with weak RSSI alone (one occurred at -41, strong signal) | 2 phones, labels A/B — physical models TBD, confirm which. TX-power-HIGH + write-timeout build. Closed doors throughout, one leg separated by a wall + bathroom |
 | Range, outdoors line of sight | Discovery still working (intermittently) at ~40m; writes already failing (status 133) at that distance — see §10. **Not an official measurement**, informal check | Redmi + OPPO, open pathway, no walls, light foot traffic. Medium TX power (pre-§9 patch) |
 | Discovery time, best of 10 | 245ms (1 sample, not yet a real best-of-10) | B scanning for A, A already advertising. Same room, both M2101K7BI |
 | Discovery time, worst of 10 | | |
 | Battery, 1 hr continuous scan | | |
 | Battery, 1 hr duty-cycled 10s/50s | | |
-| Negotiated ATT MTU | | |
-| Max single-write payload | | |
+| Negotiated ATT MTU | 517 (both directions, consistent across the whole indoor run) | Confirmed §11 run |
+| Max single-write payload | **512B confirmed working, repeatedly, both directions** — including at RSSI -91. `CLAIM_SCHEMA.md` §9.2's stated ceiling holds on real hardware; no fragmentation needed at the current 400B target | Confirmed §11 run, TX-power-HIGH build |
 | Multi-hop relay works? | | |
 
 **Methodology note:** the first attempt (A scanning for B, both buttons tapped
@@ -418,3 +418,115 @@ not just Scan restart) is the right one — discovery alone would have shown
 this as "still findable" well past where writes actually work. Record range
 as two numbers, not one: discovery boundary and write boundary. They will
 not be the same distance.
+
+
+---
+
+## 11. Indoor range test — TX-power-HIGH build, first clean data set
+
+**First test run on the TX-power-HIGH + write-timeout build. No open bugs
+surfaced — everything below is measurement, not debugging.**
+
+### Layout
+
+One phone stationary ("X"), the other tested from **four** points, doors
+closed throughout. Three are on the sketch; the fourth (side-by-side with
+X) wasn't drawn but was the very first position tested:
+
+```
++-------------------------+
+| P3            |    P2   |
+|               |  (wall  |
+|               |   +     |
+|               | bathroom|
+|---            | between |
+| P1            |    X    |
+|               | P0 here |
++-------------------------+
+```
+
+Tested in order **P0 → P1 → P2 → P3**:
+- **P0** — literally side-by-side with X, essentially point-blank
+- **P1** — same general area as X, a short distance further out
+- **P2** — separated from P1 by a wall **and** a bathroom in between
+- **P3** — far corner, full width of the home plus a wall from X
+
+### RSSI by position
+
+| Position | RSSI range | Read as |
+|---|---|---|
+| P0 | A saw B at **-79**, B saw A at **-45** | Same physical moment, genuinely asymmetric — see below |
+| P1 | -39 to -45 | Strong |
+| P2 | -83 to -84 | Big drop — the wall+bathroom is a real attenuator |
+| P3 | -89 to -94 | Weakest recorded, still not a hard cutoff |
+
+P1 through P3 are monotonic with distance/obstruction, no surprises —
+confidence-inspiring in itself, since it means the RSSI reporting is
+behaving sanely across a real walk rather than jumping around.
+
+**P0 is the interesting one.** Standing side-by-side, the two phones
+reported meaningfully different signal strength for each other at the same
+instant — A read B as weaker (-79) than B read A (-45), a 34 dB gap at
+essentially zero distance. This is a real, known BLE phenomenon (link
+asymmetry: antenna placement, phone orientation, body blocking, and
+chipset sensitivity all differ per device — the two directions of one link
+are not guaranteed to match), not a bug and not noise to average away.
+Worth remembering for how the real app should read RSSI: **a device's own
+RSSI reading of a peer says something about that specific link direction,
+not a shared "true" distance** — corroboration/relay logic should not
+assume both ends agree on signal quality.
+
+### The result: no write-range boundary found inside the home
+
+Both 400B and 512B probes **kept succeeding even at P3's weakest readings**
+(-91). Per the standing guidance on this: "never found the edge" is a real,
+useful result, not an incomplete test — it means this home's indoor
+footprint, even through a wall+bathroom and a full diagonal, stays inside
+usable BLE range on the current build.
+
+### Honest caveat: write failures don't track RSSI cleanly
+
+```
+TIMED OUT at RSSI ~-41   (strong signal!)
+TIMED OUT at RSSI ~-84   (weak)
+TIMED OUT at RSSI ~-89 to -91   (weak)
+```
+
+One `TIMED OUT` happened at **strong** signal, where a connection should be
+trivial. Read as: not every write failure in this test was a range effect.
+Some are plausibly BLE stack contention — both phones acting as central
+*and* peripheral, potentially attempting connections to each other around
+the same moment (same failure family as the GATT registration exhaustion in
+§8, on a smaller scale). Do not read every `TIMED OUT` in this log as
+"reached the range boundary" — the RSSI trend is the honest range signal;
+individual timeout events are noisier than that.
+
+### Payload size — confirmed cleanly
+
+512B writes succeeded repeatedly, at every position including the weakest
+(P3, -91). This directly answers the Day 4 payload question: `CLAIM_SCHEMA.md`
+§9.2's stated 512B ceiling holds on real hardware, well past the 400B target
+it assumes. **No fragmentation feature needed at the current schema budget.**
+This is the number to bring to B, per `PERSON_A.md` §4 — it's now answered
+with evidence, not an assumption.
+
+### Also observed, not a bug
+
+- `RX malformed: AAAA...` lines on both phones are the probe payloads
+  landing exactly as expected — a raw filler payload isn't pipe-delimited,
+  so it correctly fails `_SpikeMessage` parsing and gets logged as
+  malformed. Confirms content arrived; not an error.
+- `RX dup A-0` / `RX dup B-1` on both sides, timestamps cross-correlating
+  within ~300ms between the two phones' independent clocks — full-flood
+  relay-back correctly caught by the de-dup cache, and a small, real nod to
+  why the project deliberately avoids wall-clock logic (`CLAIM_SCHEMA.md`
+  §4.2). Far too short a window to say anything about the real multi-day
+  drift question — that needs 72+ hours, not one walk through a house.
+
+### Still open from this run
+
+- **Which physical phone models were A and B for this specific test?**
+  Not recorded — confirm and fill into the Devices table in §2.
+- Outdoor range still needs re-running on this same TX-power-HIGH build —
+  the §10 outdoor figure (~40m) predates this patch and is a lower bound,
+  not representative of the current build's real range.
