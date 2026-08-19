@@ -111,3 +111,178 @@ is no writable characteristic for a neighbour to write into. Full comparison in
 
 Fallback if it proves unusable on our devices: hand-written Android platform
 channel over `BluetoothGattServer`. Record which way it went here.
+
+**Verdict so far: usable, but with real defects — see §6 and §8.** It is the
+only Dart option that does both BLE roles, so the choice stands. But two
+genuine bugs were found in it during Phase 0 (an advertising call that hangs
+forever, and GATT client registrations that leak until Android refuses more),
+both requiring workarounds in spike code. Phase 2 should budget time for
+plugin-level problems rather than assuming this dependency is solid, and
+should keep the platform-channel fallback genuinely on the table.
+
+---
+
+## 6. Real bug in `bluetooth_low_energy`: passing an advertisement `name` hangs `startAdvertising()` forever
+
+**This one cost most of a day and was misdiagnosed twice. Read the whole
+section before touching advertising code.**
+
+### Symptom
+
+On one phone (Motorola, Android 16 / API 36) `startAdvertising()` never
+returned. No exception, no callback, no log — the Advertise button simply did
+nothing. Survived **every** reset we could throw at it:
+
+| Attempt | Result |
+|---|---|
+| Stop then Advertise again | Hangs |
+| Full phone reboot | Hangs |
+| Fresh app reinstall (never launched before) | Hangs |
+| `adb shell am force-stop com.android.bluetooth` (restart the Bluetooth *system process*) | Hangs |
+
+### Two wrong diagnoses along the way — both recorded because the reasoning matters
+
+1. **"Advertise restart is broken, cold start is fine."** Wrong: a fresh
+   install hung on its very first tap. The one early success was luck, not a
+   pattern.
+2. **"It's an Android 16 / OEM framework bug, nothing we can do."** Also
+   wrong, and nearly led to writing off every Android 16+ device. The tell
+   that disproved it: in the failing case there were **no
+   `D/BluetoothLeAdvertiser` log lines at all**, whereas the one working case
+   had them. The hang was happening *before* Android's advertiser was ever
+   reached — i.e. inside the plugin, not the OS.
+
+### Actual root cause
+
+`Advertisement(name: ...)` does something non-obvious on Android. From
+`bluetooth_low_energy_android/lib/src/peripheral_manager_impl.dart`:
+
+```dart
+Future<void> startAdvertising(Advertisement advertisement) async {
+  final nameArgs = advertisement.name;
+  if (nameArgs != null) {
+    final newNameArgs = await _api.setName(nameArgs);   // <-- hangs here
+  }
+  // ...real startAdvertising call never reached
+```
+
+and `PeripheralManagerImpl.kt`:
+
+```kotlin
+override fun setName(nameArgs: String, callback: (Result<String?>) -> Unit) {
+    val setting = adapter.setName(nameArgs)   // renames the WHOLE PHONE, returns true
+    if (!setting) { throw IllegalStateException() }
+    mSetNameCallback = callback               // parked, waiting for a broadcast
+}
+```
+
+resolved *only* by:
+
+```kotlin
+BluetoothAdapter.ACTION_LOCAL_NAME_CHANGED -> {
+    val callback = mSetNameCallback ?: return
+    callback(Result.success(nameArgs))        // the only thing completing the Future
+}
+```
+
+**If the adapter name already equals the requested name, Android fires no
+`ACTION_LOCAL_NAME_CHANGED` broadcast — nothing changed — so the callback is
+never invoked and the Dart Future never completes.** `adapter.setName()`
+still returns `true`, so the plugin's own error check passes cleanly.
+
+Confirmed decisively: `adb shell settings get secure bluetooth_name` returned
+**`B`** on the stuck phone — exactly the name being set.
+
+This also explains why nothing fixed it. The Bluetooth adapter name is a
+**persisted system setting**, not app-owned data, so it survives reboots,
+reinstalls, and Bluetooth-service restarts alike. The Motorola was never
+special; it was simply the phone that happened to already be named `B`. The
+other two worked only because their names were changing to *new* values.
+
+### Fix
+
+Do not pass `name` to `Advertisement`. The node label now travels in
+**manufacturer-specific data** (id `0xFFFF`, the SIG's reserved test value)
+inside the advertising payload, read back on discovery from
+`advertisement.manufacturerSpecificData`. Touches no global state.
+
+Verified on the previously-broken phone: five consecutive start/stop cycles,
+all clean, payload 26 bytes (within the 31-byte legacy advertising budget;
+scan response now 0 bytes since no device name is included).
+
+### Two things worth carrying into Phase 2
+
+- **A production `lib/mesh/` must never set the advertisement name on
+  Android** — and more generally must not let a library silently mutate
+  device-global settings. Renaming the user's phone as a side effect of
+  starting a mesh node is unacceptable behaviour in a disaster app, entirely
+  separate from the hang.
+- **Every native BLE call needs its own timeout.** The `.timeout(5s)` wrapper
+  added here is what turned "button does nothing" into a diagnosable error
+  and ultimately exposed the real cause. `CLAUDE.md` §9 asks for honest
+  limitations; a call that can hang forever with no error is one.
+
+**Side effect to clean up:** the earlier code permanently renamed the three
+test phones' Bluetooth names to `A`, `B`, `C`. Restore via
+Settings then Bluetooth then Device name on each.
+
+---
+
+## 7. Confirmed on real hardware — BLE address is not a stable device identity
+
+After one phone's app restarted, the scanning phone saw it as a **brand-new
+peer** (different `Peripheral.uuid`) rather than the same physical device it
+had already discovered. Cross-referencing session logs shows the same phones
+presenting different BLE addresses across runs (`42:F2:BE:A0:45:06`,
+`75:3C:84:9F:E6:56`, and others) with no address reused between runs.
+
+**Read as:** Android randomizes the BLE advertising address for privacy, and
+a fresh `startAdvertising()` can be issued a new one. BLE identity is scoped
+to *the current advertising session*, not to the device.
+
+**Not a spike bug and nothing to fix** — it is exactly why `CLAIM_SCHEMA.md`
+and `CLAUDE.md` §2.5 specify that `origin_device_id` comes from a persistent
+Ed25519 keypair, never from the transient BLE address. Had the design trusted
+BLE-layer identity, one phone rotating its MAC mid-session would fragment its
+corroboration history, hop tracking, and de-dup cache into what looks like
+several devices. Worth citing as empirical evidence the next time someone
+asks "can't we just use the BLE address as the device id."
+
+---
+
+## 8. GATT client registration exhaustion at just 3 devices — a small, real preview of the broadcast-storm question
+
+**Symptom:** reliable with 2 phones. Add a **third** and within minutes every
+peer on one device went permanently unreachable — not flaky, just dead — while
+sitting inches apart with Bluetooth confirmed on.
+
+**Root cause,** confirmed via raw `adb logcat`:
+
+```
+D/BluetoothGatt: connect() - device: XX:XX:XX:XX:69:AA, ...
+D/BluetoothGatt: registerApp() - UUID=<fresh random UUID, different every time>
+D/BluetoothGatt: onClientRegistered() - status=257 clientIf=0
+D/BluetoothGatt: close()
+```
+
+`status=257` is Android refusing a new GATT client registration — the
+process's quota is full. The plugin registers a **brand-new client identity
+on every single `connect()`** rather than reusing one (dozens of distinct
+UUIDs captured, none reused). Three phones each pinging 2 peers every few
+seconds hit the per-process cap for real. Every attempt then failed *before
+reaching the peer* — indistinguishable from "unreachable" in app-level logs,
+but actually a local resource-table problem, not radio or range.
+
+**Mitigation applied:** ping interval widened 4s to 12s. A mitigation, not a
+fix — the registration-per-call behaviour is inside the plugin. Recovery once
+capped: force-close and relaunch (releases the registrations).
+
+**Why this is not a footnote:** `Docs/PERSON_A.md` §9 flags *"does flood
+routing cause broadcast storms at relief-camp density (hundreds of phones)?"*
+as needing a bigger test than Phase 0 can run. **This is that failure mode,
+at n=3.** A resource that silently exhausts under load, surfacing to the app
+as "peers are gone", is exactly what makes flood routing dangerous at density.
+Phase 2 needs either connection pooling (reuse one client, don't churn) or
+hard rate-limiting on connection attempts — and must distinguish "peer
+unreachable" from "local resource exhausted", because the real corroboration
+and relay logic will otherwise draw wrong conclusions from a failed send.
