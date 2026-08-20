@@ -207,8 +207,8 @@ class ClaimDetailSheet extends StatelessWidget {
   }
 
   Widget _buildClaimCard(MockClaim claim) {
-    final trustConfig = _trustConfig(claim.claimTrust);
-    final priorityConfig = _priorityConfig(claim.dispatchPriority);
+    final trustConfig = ClaimDisplayHelpers.trustConfig(claim.claimTrust);
+    final priorityConfig = ClaimDisplayHelpers.priorityConfig(claim.dispatchPriority);
 
     return Container(
       padding: const EdgeInsets.all(14),
@@ -231,7 +231,7 @@ class ClaimDetailSheet extends StatelessWidget {
               // Never a precise timestamp. mockCreatedAt is a Week-1-only
               // proxy; real relative time comes from mesh time gossip in Week 2.
               Text(
-                _relativeTimeLabel(claim.mockCreatedAt),
+                ClaimDisplayHelpers.relativeTimeLabel(claim.mockCreatedAt),
                 style: const TextStyle(
                   color: AppColors.secondaryText,
                   fontSize: 11,
@@ -286,11 +286,7 @@ class ClaimDetailSheet extends StatelessWidget {
   Widget _buildSosDetails(SosPayload payload, MockClaim claim) {
     // Time-based aging check — NOT hardcoded to a specific claim ID.
     // Uses mockCreatedAt (Week-1-only wall-clock proxy for mesh time gossip).
-    final age = DateTime.now().difference(claim.mockCreatedAt);
-    final isAging = (claim.type == ClaimType.sos ||
-            claim.type == ClaimType.sosProxy) &&
-        claim.status == ClaimStatus.active &&
-        age > const Duration(hours: 1);
+    final isAging = ClaimDisplayHelpers.isAgingSos(claim);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -300,7 +296,7 @@ class ClaimDetailSheet extends StatelessWidget {
             const SizedBox(width: 6),
             Text(
               payload.headcount != null
-                  ? 'Headcount: ${_headcountLabel(payload.headcount!)}'
+                  ? 'Headcount: ${ClaimDisplayHelpers.headcountLabel(payload.headcount!)}'
                   : 'Individual SOS (Single person)',
               style: const TextStyle(
                 color: AppColors.primaryText,
@@ -325,7 +321,7 @@ class ClaimDetailSheet extends StatelessWidget {
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
-                    'Aging SOS: Unresolved for ${_relativeTimeLabel(claim.mockCreatedAt)}. Higher response urgency.',
+                    'Aging SOS: Unresolved for ${ClaimDisplayHelpers.relativeTimeLabel(claim.mockCreatedAt)}. Higher response urgency.',
                     style: const TextStyle(
                       color: AppColors.darkRed,
                       fontSize: 11,
@@ -351,7 +347,7 @@ class ClaimDetailSheet extends StatelessWidget {
             const SizedBox(width: 6),
             Text(
               payload.headcount != null
-                  ? 'Proxy SOS — ${_headcountLabel(payload.headcount!)}'
+                  ? 'Proxy SOS — ${ClaimDisplayHelpers.headcountLabel(payload.headcount!)}'
                   : 'Proxy SOS (Reported for neighbour)',
               style: const TextStyle(
                 color: AppColors.primaryText,
@@ -479,66 +475,5 @@ class ClaimDetailSheet extends StatelessWidget {
         ),
       ),
     );
-  }
-
-  static ({String label, Color fg, Color bg, Color border}) _trustConfig(ClaimTrust trust) =>
-      switch (trust) {
-        ClaimTrust.unconfirmed => (
-            label: 'UNCONFIRMED',
-            fg: AppColors.secondaryText,
-            bg: AppColors.grayLight,
-            border: AppColors.borderSubtle,
-          ),
-        ClaimTrust.corroborated => (
-            label: 'CORROBORATED',
-            fg: AppColors.strongBlue,
-            bg: AppColors.blueLight,
-            border: const Color(0xFFBEE3F8),
-          ),
-        ClaimTrust.groundConfirmed => (
-            label: 'GROUND CONFIRMED',
-            fg: AppColors.darkGreen,
-            bg: AppColors.greenLight,
-            border: const Color(0xFFA7F3D0),
-          ),
-      };
-
-  static ({String label, Color fg, Color bg, Color border}) _priorityConfig(DispatchPriority priority) =>
-      switch (priority) {
-        DispatchPriority.low => (
-            label: 'LOW',
-            fg: AppColors.secondaryText,
-            bg: AppColors.grayLight,
-            border: AppColors.borderSubtle,
-          ),
-        DispatchPriority.seenByVolunteer => (
-            label: 'SEEN',
-            fg: AppColors.amberDark,
-            bg: AppColors.amberLight,
-            border: const Color(0xFFFDE68A),
-          ),
-        DispatchPriority.enRoute => (
-            label: 'EN ROUTE',
-            fg: AppColors.strongBlue,
-            bg: AppColors.blueLight,
-            border: const Color(0xFF90CDF4),
-          ),
-      };
-
-  static String _headcountLabel(HeadcountBucket bucket) => switch (bucket) {
-        HeadcountBucket.twoToFive => '2-5 people',
-        HeadcountBucket.sixToFifteen => '6-15 people',
-        HeadcountBucket.fifteenPlus => '15+ people',
-      };
-
-  /// Bucketed relative-time label — CLAIM_SCHEMA.md §4.
-  /// Never a precise timestamp. Uses mockCreatedAt (Week-1 proxy).
-  static String _relativeTimeLabel(DateTime createdAt) {
-    final age = DateTime.now().difference(createdAt);
-    if (age.inMinutes < 1) return 'Just now';
-    if (age.inMinutes < 60) return '${age.inMinutes} min ago';
-    if (age.inHours == 1) return 'About 1 hour ago';
-    if (age.inHours < 24) return 'About ${age.inHours} hours ago';
-    return '${age.inDays} day${age.inDays == 1 ? '' : 's'} ago';
   }
 }

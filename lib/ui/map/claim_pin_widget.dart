@@ -37,39 +37,13 @@ class _ClaimPinWidgetState extends State<ClaimPinWidget>
   late Animation<double> _pulseAnimation;
 
   /// Whether this SOS/SOS_PROXY is aging (active and older than 1 hour).
-  /// Driven by mockCreatedAt (Week-1-only wall-clock proxy for mesh time
-  /// gossip which doesn't exist yet — CLAIM_SCHEMA.md §4).
-  bool get _isAgingSos {
-    final c = widget.claim;
-    if (!(c.type == ClaimType.sos || c.type == ClaimType.sosProxy)) return false;
-    if (c.status != ClaimStatus.active) return false;
-    final age = DateTime.now().difference(c.mockCreatedAt);
-    // 1 hour threshold — any active SOS older than 1 hour is visually
-    // escalated. The urgency increases stepwise at 3hr and 6hr+.
-    return age > const Duration(hours: 1);
-  }
+  bool get _isAgingSos => ClaimDisplayHelpers.isAgingSos(widget.claim);
 
-  /// Returns the aging urgency tier for scaling visual intensity:
-  ///   0 = not aging (< 1hr)
-  ///   1 = aging (1–3 hrs)  — slow pulse, subtle halo
-  ///   2 = aging (3–6 hrs)  — medium pulse, stronger halo
-  ///   3 = aging (6+ hrs)   — fast pulse, maximum urgency
-  int get _agingTier {
-    if (!_isAgingSos) return 0;
-    final age = DateTime.now().difference(widget.claim.mockCreatedAt);
-    if (age > const Duration(hours: 6)) return 3;
-    if (age > const Duration(hours: 3)) return 2;
-    return 1;
-  }
+  /// Returns the aging urgency tier for scaling visual intensity.
+  int get _agingTier => ClaimDisplayHelpers.agingTier(widget.claim);
 
-  /// Bucketed relative-time label for the aging badge — CLAIM_SCHEMA.md §4.
-  /// Never a precise timestamp. Computed from mockCreatedAt.
-  String get _agingLabel {
-    final age = DateTime.now().difference(widget.claim.mockCreatedAt);
-    if (age.inMinutes < 60) return '${age.inMinutes}m';
-    if (age.inHours < 24) return '~${age.inHours}h';
-    return '${age.inDays}d';
-  }
+  /// Bucketed relative-time label for the aging badge.
+  String get _agingLabel => ClaimDisplayHelpers.agingBadgeLabel(widget.claim.mockCreatedAt);
 
   /// Pulse animation speed scales with aging tier.
   Duration get _pulseDuration => switch (_agingTier) {
@@ -519,25 +493,11 @@ class _ClaimPinWidgetState extends State<ClaimPinWidget>
   }
 
   // ─── Helpers ──────────────────────────────────────────────────────
-  static IconData _hazardIcon(HazardType type) => switch (type) {
-        HazardType.flood => Icons.water_drop_outlined,
-        HazardType.roadBlock => Icons.block_outlined,
-        HazardType.structuralDamage => Icons.domain_disabled_outlined,
-        HazardType.other => Icons.warning_amber_rounded,
-      };
+  static IconData _hazardIcon(HazardType type) => ClaimDisplayHelpers.iconForHazard(type);
 
-  static IconData _resourceIcon(ResourceCategory cat) => switch (cat) {
-        ResourceCategory.foodWater => Icons.restaurant,
-        ResourceCategory.shelter => Icons.home_outlined,
-        ResourceCategory.medical => Icons.medical_services_outlined,
-        ResourceCategory.equipment => Icons.build_outlined,
-      };
+  static IconData _resourceIcon(ResourceCategory cat) => ClaimDisplayHelpers.iconForResource(cat);
 
-  static String _headcountShort(HeadcountBucket bucket) => switch (bucket) {
-        HeadcountBucket.twoToFive => '2-5',
-        HeadcountBucket.sixToFifteen => '6-15',
-        HeadcountBucket.fifteenPlus => '15+',
-      };
+  static String _headcountShort(HeadcountBucket bucket) => ClaimDisplayHelpers.headcountShort(bucket);
 }
 
 /// Clustered pin marker rendered at low zoom — CLAIM_SCHEMA.md §2, PERSON_C.md §6.
