@@ -117,7 +117,15 @@ is unreadable otherwise.
 1. Put A and C far enough apart that **neither sees the other**. Verify this
    first: with B switched off, scan on both — no `FOUND`, and Send does
    nothing. If they can see each other, the rest of the test proves nothing.
-2. Place B between them, in range of both. B's relay switch **on**.
+2. Place B between them, in range of both. B needs **all three** toggles on:
+   Advertise, **Scan**, and relay. Relay forwards by writing to whatever is in
+   B's *discovered*-peer list — if B isn't scanning, that list stays empty and
+   relay is silently a no-op even with the relay switch on, because there is
+   nobody to write to. Confirm B's screen shows `FOUND A` and `FOUND C` before
+   sending anything. (A real failed run: 2026-08-20, `PHASE0_MESH_FINDINGS.md`
+   §12 — B advertised but never scanned, so both directions' messages arrived
+   at B and stopped there with nothing logged, indistinguishable at a glance
+   from "test still running.")
 3. A: **Send**. C should log `RX ... hops=1`.
 4. Now turn B's relay switch **off** (or move B away) and Send again.
    **Delivery to C must stop.** If C still receives, A and C were in range all

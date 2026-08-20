@@ -13,7 +13,11 @@
 
 ### 1.1 Does multi-hop relay work on our hardware?
 
-**Answer:** _not yet tested_
+**Answer:** _still not tested._ One three-phone attempt (2026-08-20) was
+inconclusive — the middle phone never had Scan on, so it had no discovered
+peers to relay to, and relay was a structural no-op regardless of the relay
+toggle. See §12. Not a mesh-design finding; a test-protocol gap, now fixed
+in the README. Needs a clean re-run.
 
 Protocol used, and the negative control (delivery to C stops when B is
 removed), is in `spike/phase0_ble_mesh/README.md` → "Day 3".
@@ -51,7 +55,7 @@ fragmentation feature.
 | Battery, 1 hr duty-cycled 10s/50s | | |
 | Negotiated ATT MTU | 517 (both directions, consistent across the whole indoor run) | Confirmed §11 run |
 | Max single-write payload | **512B confirmed working, repeatedly, both directions** — including at RSSI -91. `CLAIM_SCHEMA.md` §9.2's stated ceiling holds on real hardware; no fragmentation needed at the current 400B target | Confirmed §11 run, TX-power-HIGH build |
-| Multi-hop relay works? | | |
+| Multi-hop relay works? | **Inconclusive.** First attempt found a test-setup bug (middle phone never scanned, so it had no peer to relay to) rather than testing relay itself — see §12. Needs a clean re-run. | 3 phones, 2026-08-20, A/C direct writes never succeeded (mildly crowded between them) |
 
 **Methodology note:** the first attempt (A scanning for B, both buttons tapped
 manually and staggered) read 5.8s — that number is contaminated by human
@@ -545,3 +549,91 @@ with evidence, not an assumption.
 - Outdoor range still needs re-running on this same TX-power-HIGH build —
   the §10 outdoor figure (~40m) predates this patch and is a lower bound,
   not representative of the current build's real range.
+
+---
+
+## 12. First three-phone attempt: inconclusive — B never scanned, so relay was never actually tested
+
+**2026-08-20, all three phones (A/B/C).** Recorded here in full because it is
+a genuine negative result with a clear cause, not because multi-hop was
+proven or disproven — it wasn't tested. **Day 3 is still not done.**
+
+### What the three logs show
+
+- **A** advertised and scanned throughout. `FOUND B` at 3.4s (weak, -101),
+  `FOUND C` at a very slow 127.6s (-101) — both discoveries eventually
+  landed but at RSSI implying marginal range for this run. A's direct sends
+  to B mostly succeeded (`OK`); A's direct sends to C **never once
+  succeeded** — every attempt was `FAILED (status 133)` or `TIMED OUT`.
+- **C** advertised and scanned throughout. `FOUND B` at 983ms (-80, strong).
+  `FOUND A` at 33.0s (-93) — then a **second, distinct** `FOUND A` 499.3s
+  later at a different peripheral UUID (`6815cd6c8a36` → `780dd7dcf8b1`).
+  C's direct sends to A never succeeded either (`FAILED`/`TIMED OUT`
+  throughout); sends to B were a mix of `OK` and `FAILED`/`TIMED OUT`.
+- **B advertised but never scanned.** No `scanning...` line, no `FOUND` line,
+  anywhere in B's log — `_toggleScanning()` (`main.dart:362`) was simply
+  never invoked on B for this run. B nonetheless **received both directions
+  fine**: 3× `RX "hello from C"` and 5× `RX "hello from A"`, all `hops=0`,
+  all correctly de-duplicated and logged. B's very first RX logged
+  `relay OFF — stopping here`; none of the later nine did.
+
+### Why nothing relayed — two overlapping reasons, only one of which needed a toggle
+
+Receiving a write is a **peripheral**-role callback (`_onWriteRequest`,
+`main.dart:331`) — it only needs Advertise on, not Scan. That's why B could
+receive ten messages cleanly while never scanning once. But **relaying**
+means B turning around and acting as a **central**, writing the forwarded
+message out to peers in `_peers` (`_broadcast` → `_writeToAllPeers`,
+`main.dart:357-461`). `_peers` is populated by exactly one place —
+`_onDiscovered`, which only fires while `_central.startDiscovery()` is
+running (`main.dart:408-435`). B never called it, so `_peers` was `{}` for
+the entire test.
+
+That means relay was impossible on this run **regardless of the relay
+toggle's state.** The toggle was off for the very first RX (the explicit
+`relay OFF — stopping here` line); the check at `main.dart:347` runs on
+every RX and would log that line again on every later one if it were still
+off, so the fact that none of the other nine repeat it means the toggle was
+switched on partway through. It didn't matter — with `_peers` empty, the
+relay branch on those later messages iterated zero peers and produced no
+write and no log line at all, silently indistinguishable at a glance from a
+relay that simply had nothing new to forward. Neither A nor C ever logged an
+`RX ... hops=1` for either origin, confirming nothing did in fact go out
+from B.
+
+### The one thing this run did confirm
+
+The negative control in the README's Day 3 step 1 held: A and C's *direct*
+writes to each other never succeeded once across ~10 attempts in each
+direction (mostly `status 133`, some `TIMED OUT`), consistent with genuinely
+being at or past range with people occasionally in between ("mildly crowded"
+between A and C; clear between B and C). That part of the setup was sound —
+it's specifically the B-as-relay half of the test that produced nothing.
+
+### Root cause, plainly
+
+**Test-protocol gap, not a mesh-design or plugin bug.** The README's Day 3
+step 2 said "B's relay switch on" and never said B also needs **Scan** on —
+an easy thing to forget since B doesn't need to *send* anything on its own
+initiative for the earlier two-phone tests. Fixed in `README.md` Day 3 step
+2: now states explicitly that relay silently no-ops with an empty peer list,
+and that B's screen should show `FOUND A` and `FOUND C` before any Send is
+attempted.
+
+### Secondary finding, worth keeping: BLE address rotation observed from a second vantage point
+
+C's two distinct `FOUND A` events at two different peripheral UUIDs, 499
+seconds apart, is a second independent sighting of the behavior already
+recorded in §7 (BLE address is not stable device identity) — this time seen
+by the *scanning* side rather than inferred from a restart. Further
+confirmation, not new information: `origin_device_id` must keep coming from
+the persistent Ed25519 keypair, never the transient BLE address, exactly as
+`CLAUDE.md` §2.5 already specifies.
+
+### Day 3 — still to do
+
+A clean re-run with **all three of B's toggles confirmed live** before any
+Send: Advertise, Scan, relay. Everything needed to run it correctly already
+works — A and C both advertise/scan/discover/attempt-writes correctly, and
+B receives correctly in both directions. The only missing piece was B's
+Scan toggle.
