@@ -72,6 +72,9 @@ class _MainScreenState extends State<MainScreen> {
   List<MainScreenClusterItem> _renderedClusters = [];
   double _currentZoom = 12.0;
 
+  /// Safety net flag to prevent infinite retry loops if initial projection fails
+  bool _hasRetriedInitialProjection = false;
+
   @override
   void initState() {
     super.initState();
@@ -79,13 +82,12 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   Future<void> _initializeMap() async {
+    debugPrint('[MainScreen] _initializeMap started');
     try {
       await _mapManager.initialize();
       if (mounted) {
         setState(() => _mapReady = true);
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          _updatePinScreenPositions();
-        });
+        debugPrint('[MainScreen] _initializeMap finished, _mapReady=true');
       }
     } catch (e, st) {
       debugPrint('[MainScreen] Map initialization error: $e\n$st');
@@ -100,6 +102,9 @@ class _MainScreenState extends State<MainScreen> {
   /// Projects lat/lon of filtered claims to 2D screen coordinates on camera change.
   /// Handles zoom-based clustering per CLAIM_SCHEMA.md §2 and PERSON_C.md §6.
   Future<void> _updatePinScreenPositions() async {
+    debugPrint(
+      '[MainScreen] _updatePinScreenPositions called, mapController=${_mapController != null}',
+    );
     final controller = _mapController;
     if (controller == null || !mounted) return;
 
@@ -116,6 +121,7 @@ class _MainScreenState extends State<MainScreen> {
         return c.type == ClaimType.resource;
       }
     }).toList();
+    debugPrint('[MainScreen] filteredClaims count: ${filteredClaims.length}');
 
     final List<MainScreenPinItem> projectedItems = [];
     for (final claim in filteredClaims) {
@@ -127,11 +133,31 @@ class _MainScreenState extends State<MainScreen> {
           MainScreenPinItem(claim: claim, screenPoint: screenPos),
         );
       } catch (e) {
-        // Map controller may still be initializing screen projection
+        debugPrint('[MainScreen] toScreenLocation failed for ${claim.id}: $e');
       }
     }
+    debugPrint('[MainScreen] projectedItems count: ${projectedItems.length}');
 
     if (!mounted) return;
+
+    // Single retry safety net if initial style projection was not yet reliable
+    if (projectedItems.isEmpty &&
+        filteredClaims.isNotEmpty &&
+        !_hasRetriedInitialProjection) {
+      _hasRetriedInitialProjection = true;
+      debugPrint('[MainScreen] Scheduling retry projection in 300ms');
+      Future.delayed(const Duration(milliseconds: 300), () {
+        if (mounted) {
+          _updatePinScreenPositions();
+        }
+      });
+      return;
+    }
+
+    // Reset retry flag once pins are successfully projected
+    if (projectedItems.isNotEmpty) {
+      _hasRetriedInitialProjection = false;
+    }
 
     // Cluster nearby pins if zoom is low (zoom < 11.5)
     // Display-only per CLAIM_SCHEMA.md §2; underlying records remain separate.
@@ -258,7 +284,12 @@ class _MainScreenState extends State<MainScreen> {
                   trackCameraPosition: true,
                   myLocationEnabled: false, // no GPS needed for MVP
                   onMapCreated: (controller) {
+                    debugPrint('[MainScreen] onMapCreated fired');
                     _mapController = controller;
+                    _updatePinScreenPositions();
+                  },
+                  onStyleLoadedCallback: () {
+                    debugPrint('[MainScreen] style loaded callback fired');
                     _updatePinScreenPositions();
                   },
                   onCameraIdle: () {
@@ -303,13 +334,22 @@ class _MainScreenState extends State<MainScreen> {
   /// Builds Positioned widgets for each individual pin and cluster.
   List<Widget> _buildPinOverlayWidgets() {
     final List<Widget> widgets = [];
+    final pixelRatio = MediaQuery.of(context).devicePixelRatio;
 
     // Individual pins
     for (final item in _renderedPins) {
+      debugPrint(
+        '[MainScreen] raw screenPoint: (${item.screenPoint.x}, ${item.screenPoint.y}), '
+        'logical: (${(item.screenPoint.x / pixelRatio).toStringAsFixed(1)}, ${(item.screenPoint.y / pixelRatio).toStringAsFixed(1)}), '
+        'devicePixelRatio: $pixelRatio',
+      );
+      final logicalX = item.screenPoint.x / pixelRatio;
+      final logicalY = item.screenPoint.y / pixelRatio;
+
       widgets.add(
         Positioned(
-          left: item.screenPoint.x - 24,
-          top: item.screenPoint.y - 24,
+          left: logicalX - 24,
+          top: logicalY - 24,
           child: ClaimPinWidget(
             claim: item.claim,
             onTap: () {
@@ -322,10 +362,13 @@ class _MainScreenState extends State<MainScreen> {
 
     // Clustered pins at low zoom
     for (final cluster in _renderedClusters) {
+      final logicalX = cluster.screenPoint.x / pixelRatio;
+      final logicalY = cluster.screenPoint.y / pixelRatio;
+
       widgets.add(
         Positioned(
-          left: cluster.screenPoint.x - 40,
-          top: cluster.screenPoint.y - 18,
+          left: logicalX - 40,
+          top: logicalY - 18,
           child: ClusterPinWidget(
             claims: cluster.claims,
             onTap: () {
