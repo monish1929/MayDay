@@ -181,6 +181,7 @@ Update after each work session. Short entries — this is for the team sync.
 | 2026-08-19 | c/app-shell | Day 2 complete — MapLibre GL integrated via a localhost-only HTTP tile server reading directly from the bundled SQLite .mbtiles (no file:// or remote tile paths); verified working in real airplane mode on-device. | See new subsection below for architecture decisions and gotchas future work should know about. |
 | 2026-08-20 | c/app-shell | Day 3 complete — Rescue (Individual/Group/Proxy incl. headcount + 80-char proxy note), Report (hazard kind + 80-char note), Contribute (canonical 4 categories + pledged count) bottom sheet forms built in lib/ui/forms/, wired to main_screen.dart buttons, all submits construct correct payload classes and print to console. Verified via logcat against CLAIM_SCHEMA.md §8 — all enum values, payload field names, and null handling (Individual has no headcount, Proxy headcount/note optional) confirmed correct on-device. | None — ready for Day 4 (pins and layers). |
 | 2026-08-20 | c/app-shell | Day 4 complete — Emergency/Resource layer toggle, distinct pin rendering per type/trust/priority, confirmation counts on hazard pins, display-only clustering at low zoom (< 11.5), time-driven aging SOS urgency escalation (pulsing halo & speed scaled across 1hr/3hr/6hr+ tiers). Resource range display deferred to Week 2. | Ready for Day 5 (Volunteer ops screen). |
+| 2026-08-20 | c/app-shell | Day 4 on-device verification complete. Found and fixed two bugs post-implementation: (1) pin projection ran on onMapCreated before MapLibre's style/camera was ready, silently dropping all pins on first launch — fixed by moving initial projection to onStyleLoadedCallback plus a bounded single retry, with the previously-silent toScreenLocation failures now logged; (2) toScreenLocation() returns physical device pixels but Positioned expects logical pixels, placing every pin off-screen — fixed by dividing by MediaQuery.devicePixelRatio in _buildPinOverlayWidgets(). Confirmed on-device: all three trust tiers render correctly, aging escalates visibly across tier 1 (sos-002, ~2hr) and tier 3 (sos-003, ~6.5hr), clustering separates into individual pins at high zoom and groups at low zoom with detail sheet showing each claim separately, both Emergency and Resource layers toggle correctly, resource pins show single available count with no fabricated range. | None — Day 4 fully closed. Ready for Day 5. |
 
 ### Open questions I'm carrying
 
@@ -195,7 +196,7 @@ Update after each work session. Short entries — this is for the team sync.
 | Screen | Mock | Real data | Notes |
 |---|---|---|---|
 | Entry | ✓ | ☐ | |
-| Map + layers | ✓ | ☐ | |
+| Map + layers | ✓ | ☐ | Pin projection timing + coordinate space bugs found and fixed post-implementation — see progress log. |
 | Bottom sheet | ✓ | ☐ | |
 | Rescue form | ✓ | ☐ | incl. Proxy |
 | Report form | ✓ | ☐ | |
