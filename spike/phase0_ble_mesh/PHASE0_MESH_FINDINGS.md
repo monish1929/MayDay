@@ -48,14 +48,14 @@ fragmentation feature.
 | Measurement | Result | Device / conditions |
 |---|---|---|
 | Range, indoors through walls | **Never found a hard write-range boundary, over just ~4-6m total distance.** RSSI -45 to -79 side-by-side with the stationary phone (asymmetric — see §11), -39/-41 a short distance away, -83/-84 through one wall+bathroom, -89 to -94 at the far corner (full width of home + a wall) — see §11. Free-space loss over 4-6m is only ~15-16 dB, so the ~50 dB drop observed is 30+ dB of wall/obstruction attenuation, not distance — says more about this home's wall construction than about BLE's raw range. Writes (including 512B probes) mostly still succeeded even at -91 to -94; some `TIMED OUT` failures scattered across the range, not cleanly correlated with weak RSSI alone (one occurred at -41, strong signal) | 2 phones, labels A/B — physical models TBD, confirm which. TX-power-HIGH + write-timeout build. Closed doors throughout, one leg separated by a wall + bathroom |
-| Range, outdoors line of sight | Discovery still working (intermittently) at ~40m; writes already failing (status 133) at that distance — see §10. **Not an official measurement**, informal check | Redmi + OPPO, open pathway, no walls, light foot traffic. Medium TX power (pre-§9 patch) |
+| Range, outdoors line of sight | Discovery still working (intermittently) at ~40m; writes already failing (status 133) at that distance — see §10. **Not an official measurement**, informal check. A separate later data point (§12, TX-HIGH build) had discovery still succeeding, badly, at ~100m — writes still failing there too. Neither is a controlled walked measurement; **still needs a real Day 4 re-run on the TX-HIGH build** | Redmi + OPPO, open pathway, no walls, light foot traffic. Medium TX power (pre-§9 patch) |
 | Discovery time, best of 10 | 245ms (1 sample, not yet a real best-of-10) | B scanning for A, A already advertising. Same room, both M2101K7BI |
 | Discovery time, worst of 10 | | |
 | Battery, 1 hr continuous scan | | |
 | Battery, 1 hr duty-cycled 10s/50s | | |
 | Negotiated ATT MTU | 517 (both directions, consistent across the whole indoor run) | Confirmed §11 run |
 | Max single-write payload | **512B confirmed working, repeatedly, both directions** — including at RSSI -91. `CLAIM_SCHEMA.md` §9.2's stated ceiling holds on real hardware; no fragmentation needed at the current 400B target | Confirmed §11 run, TX-power-HIGH build |
-| Multi-hop relay works? | **Inconclusive.** First attempt found a test-setup bug (middle phone never scanned, so it had no peer to relay to) rather than testing relay itself — see §12. Needs a clean re-run. | 3 phones, 2026-08-20, A/C direct writes never succeeded (mildly crowded between them) |
+| Multi-hop relay works? | **Inconclusive.** First attempt found a test-setup bug (middle phone never scanned, so it had no peer to relay to) rather than testing relay itself — see §12. Needs a clean re-run. | 3 phones, 2026-08-20, A/C ~100m apart outdoor (mildly crowded between them), direct writes never succeeded |
 
 **Methodology note:** the first attempt (A scanning for B, both buttons tapped
 manually and staggered) read 5.8s — that number is contaminated by human
@@ -554,9 +554,12 @@ with evidence, not an assumption.
 
 ## 12. First three-phone attempt: inconclusive — B never scanned, so relay was never actually tested
 
-**2026-08-20, all three phones (A/B/C).** Recorded here in full because it is
-a genuine negative result with a clear cause, not because multi-hop was
-proven or disproven — it wasn't tested. **Day 3 is still not done.**
+**2026-08-20, all three phones (A/B/C).** A and C placed **~100m apart**
+(outdoor, "mildly crowded" between them — occasional foot traffic), B
+between them, no distance recorded for B's position specifically. Recorded
+here in full because it is a genuine negative result with a clear cause, not
+because multi-hop was proven or disproven — it wasn't tested. **Day 3 is
+still not done.**
 
 ### What the three logs show
 
@@ -606,9 +609,23 @@ from B.
 The negative control in the README's Day 3 step 1 held: A and C's *direct*
 writes to each other never succeeded once across ~10 attempts in each
 direction (mostly `status 133`, some `TIMED OUT`), consistent with genuinely
-being at or past range with people occasionally in between ("mildly crowded"
-between A and C; clear between B and C). That part of the setup was sound —
-it's specifically the B-as-relay half of the test that produced nothing.
+being at ~100m — well past where §10's pre-patch outdoor test put the write
+boundary. That part of the setup was sound — it's specifically the
+B-as-relay half of the test that produced nothing.
+
+**A second informal outdoor discovery data point, worth logging even though
+it's a Day 3 byproduct, not a Day 4 measurement:** A and C still found each
+other at ~100m on the TX-power-HIGH build — badly (127.6s and 33.0s to
+discover, RSSI -93 to -101, C's sighting of A even rotated addresses mid-run
+after 499s), but they found each other, which the pre-patch §10 test at
+~40m did not reliably do either (intermittent there too). Read cautiously:
+this is one uncontrolled pair of readings from a relay test, not a walked
+range measurement, and "mildly crowded" foot traffic between A and C is an
+uncontrolled variable. But it is at least directional evidence that
+TX-power-HIGH (§9) may be extending outdoor discovery range well beyond the
+~40m pre-patch figure, which strengthens the case for re-running §10's
+outdoor test properly on this build rather than treating ~40m as good enough
+to plan around.
 
 ### Root cause, plainly
 
