@@ -152,6 +152,29 @@ class _SpikeHomeState extends State<SpikeHome> {
   bool _relayEnabled = true;
   int _sendCounter = 0;
 
+  /// Node labels this device refuses to write to — the Day 3 relay test's
+  /// topology, enforced in software instead of by walking apart.
+  ///
+  /// Why this exists at all: the relay test needs A and C to have NO direct
+  /// path, so that a message arriving at C provably came via B. Distance is
+  /// a terrible way to guarantee that. Discovery range materially exceeds
+  /// write range (§10, §13), both boundaries are fuzzy and drift with
+  /// orientation and passers-by, and near the edge a direct write sometimes
+  /// succeeds and sometimes doesn't — so "far enough apart" is never a fact
+  /// you can assert, only hope for.
+  ///
+  /// Worse, de-dup actively hides a working relay when both paths exist:
+  /// A's direct copy (hops=0) and B's relayed copy (hops=1) race, direct
+  /// usually wins because it is one hop instead of two, and C logs hops=0
+  /// and drops the relayed copy as a dup. The relay worked; the log says
+  /// it didn't. Blocking by label removes the direct path outright, so
+  /// `hops=1` at C is unambiguous.
+  ///
+  /// Keyed on the node LABEL, never the peripheral uuid: Android rotates
+  /// the BLE advertising address (§7, observed twice), so a uuid-keyed
+  /// block would silently lapse the moment the peer re-advertised.
+  final Set<String> _blockedLabels = <String>{};
+
   /// Short label so the three phones are distinguishable in the log.
   /// Set it per-device from the UI before testing.
   String _nodeName = 'NODE';
@@ -503,6 +526,15 @@ class _SpikeHomeState extends State<SpikeHome> {
     for (final MapEntry<String, Peripheral> entry in _peers.entries.toList()) {
       final String key = entry.key;
       final Peripheral peer = entry.value;
+      // Day 3 test topology (see _blockedLabels). Logged rather than silent
+      // so the test record shows the link was cut deliberately — a reader
+      // must be able to tell an enforced topology apart from a radio
+      // failure, otherwise the negative control proves nothing.
+      final String peerLabel = _peerNames[key] ?? key;
+      if (_blockedLabels.contains(peerLabel)) {
+        _say('     -> $label BLOCKED to $peerLabel (test topology)');
+        continue;
+      }
       if (_busyPeers.contains(key)) {
         // Another write is already mid-connection to this exact peer.
         // Don't race it — see _busyPeers' doc comment for why that crashed
@@ -549,27 +581,74 @@ class _SpikeHomeState extends State<SpikeHome> {
   /// devices: -50s comfortable, -70s fine, -80s getting marginal, -90s about
   /// to drop. Note RSSI is noisy — a body, a wall, or pocketing the phone
   /// moves it 10+ dB — so treat it as a trend, not a distance readout.
+  /// Turns a raw RSSI into the only question the tester actually has while
+  /// walking: *can I still send, or can I only still see them?*
+  ///
+  /// Hearing an advertisement and completing a write are different jobs with
+  /// different range limits — an advert is a one-way broadcast repeated many
+  /// times a second and only one repeat has to land, whereas a write needs a
+  /// whole two-way GATT handshake to survive intact. Write range is
+  /// therefore materially shorter, which is exactly the trap that made the
+  /// earlier range runs confusing: a green chip means "in discovery range",
+  /// NOT "I can send to them".
+  ///
+  /// Thresholds come from this spike's own logs (§13), not from general BLE
+  /// guidance: writes were clean at -55 to -74, mixed around -85, and mostly
+  /// TIMED OUT / status-133 by -90 to -95. Treat as a rough band on these
+  /// devices, not a calibrated cutoff — RSSI moves 10+ dB from a hand, a
+  /// pocket, or turning around.
+  String _writeQuality(int? rssi) {
+    if (rssi == null) return '?';
+    if (rssi >= -75) return 'write ok';
+    if (rssi >= -85) return 'write marginal';
+    return 'advert only';
+  }
+
   Widget _buildPeerStatusChip(String key) {
     final String name = _peerNames[key] ?? key;
     final DateTime? seen = _lastSeenAt[key];
     final bool live = !_isStale(key);
     final int? rssi = _lastRssi[key];
+    final bool blocked = _blockedLabels.contains(name);
 
     final String detail = seen == null
         ? 'not heard yet'
         : live
-            ? 'rssi ${rssi ?? '?'}'
+            ? 'rssi ${rssi ?? '?'} · ${_writeQuality(rssi)}'
             : '${DateTime.now().difference(seen).inSeconds}s ago';
 
-    return Chip(
-      avatar: Icon(
-        live ? Icons.bluetooth_connected : Icons.bluetooth_disabled,
-        color: Colors.white,
-        size: 18,
+    final Color background = blocked
+        ? Colors.grey[800]!
+        : live
+            ? Colors.green[700]!
+            : Colors.red[700]!;
+
+    return GestureDetector(
+      // Tap to cut/restore the direct link to this peer — the Day 3 relay
+      // topology. See _blockedLabels for why this beats walking apart.
+      onTap: () => setState(() {
+        if (blocked) {
+          _blockedLabels.remove(name);
+          _say('link to $name RESTORED');
+        } else {
+          _blockedLabels.add(name);
+          _say('link to $name BLOCKED (test topology)');
+        }
+      }),
+      child: Chip(
+        avatar: Icon(
+          blocked
+              ? Icons.block
+              : live
+                  ? Icons.bluetooth_connected
+                  : Icons.bluetooth_disabled,
+          color: Colors.white,
+          size: 18,
+        ),
+        label: Text(blocked ? '$name — BLOCKED' : '$name — $detail'),
+        backgroundColor: background,
+        labelStyle: const TextStyle(color: Colors.white),
       ),
-      label: Text('$name — $detail'),
-      backgroundColor: live ? Colors.green[700] : Colors.red[700],
-      labelStyle: const TextStyle(color: Colors.white),
     );
   }
 
@@ -625,6 +704,16 @@ class _SpikeHomeState extends State<SpikeHome> {
                     spacing: 8,
                     runSpacing: 8,
                     children: _peers.keys.map(_buildPeerStatusChip).toList(),
+                  ),
+                  const Padding(
+                    padding: EdgeInsets.only(top: 6),
+                    child: Text(
+                      'Tap a peer to block/unblock writes to it. Green = in '
+                      'discovery range; read the "write ok / marginal / '
+                      'advert only" hint for whether a Send will actually '
+                      'land.',
+                      style: TextStyle(fontSize: 12, color: Colors.grey),
+                    ),
                   ),
                   // Load-bearing warning, not decoration: liveness is now
                   // derived purely from advertisement reception, so with

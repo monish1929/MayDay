@@ -114,22 +114,69 @@ is unreadable otherwise.
 
 ### Day 3 — three phones, the important one
 
-1. Put A and C far enough apart that **neither sees the other**. Verify this
-   first: with B switched off, scan on both — no `FOUND`, and Send does
-   nothing. If they can see each other, the rest of the test proves nothing.
-2. Place B between them, in range of both. B needs **all three** toggles on:
-   Advertise, **Scan**, and relay. Relay forwards by writing to whatever is in
-   B's *discovered*-peer list — if B isn't scanning, that list stays empty and
-   relay is silently a no-op even with the relay switch on, because there is
-   nobody to write to. Confirm B's screen shows `FOUND A` and `FOUND C` before
-   sending anything. (A real failed run: 2026-08-20, `PHASE0_MESH_FINDINGS.md`
-   §12 — B advertised but never scanned, so both directions' messages arrived
-   at B and stopped there with nothing logged, indistinguishable at a glance
-   from "test still running.")
-3. A: **Send**. C should log `RX ... hops=1`.
-4. Now turn B's relay switch **off** (or move B away) and Send again.
-   **Delivery to C must stop.** If C still receives, A and C were in range all
-   along — go back to step 1.
+**Run this as two separate tests.** They answer two different questions and
+conflating them is what made the first attempts so hard to interpret:
+
+- **3a — does the relay *logic* work?** Software question. Desk test, five
+  minutes, deterministic.
+- **3b — does relay *extend real range*?** Radio question. Needs distance.
+
+Do 3a first. If it fails, 3b can't succeed and you'd be walking around
+debugging code. If it passes, 3b becomes readable: any failure out in the
+field is then radio, not logic.
+
+#### 3a — relay logic, all three phones on a desk
+
+No walking. Enforce the topology in software instead — **tap peer chips to
+block** rather than trying to get out of range.
+
+1. All three phones together. On each: set the node name, then **Advertise +
+   Scan** on. Wait until every phone shows the other two as peers.
+2. **On A:** tap C's chip → it greys out, `BLOCKED`. **On C:** tap A's chip →
+   same. Leave B unblocked everywhere. A and C can still *see* each other;
+   neither will *write* to the other. That is the whole negative control, and
+   unlike distance it is a fact you can point at rather than hope for.
+3. **On B:** relay switch **ON**, Advertise and Scan both on. B must show
+   `FOUND A` and `FOUND C` — relay forwards by writing to B's discovered-peer
+   list, so if B isn't scanning that list is empty and relay is silently a
+   no-op even with the switch on. (That exact mistake cost a whole run:
+   `PHASE0_MESH_FINDINGS.md` §12.)
+4. **A: Send.** Expected, and all three parts matter:
+   - A logs `BLOCKED to C (test topology)` — the direct path really was cut
+   - B logs `RX ... from A hops=0`, then forwards
+   - **C logs `RX "hello from A" from A hops=1`** ← the result. `hops=1`
+     cannot come from A directly; A always sends `hops=0`.
+5. **Negative control — B: relay switch OFF.** A: Send again. **C must receive
+   nothing.** B still logs `RX ... relay OFF — stopping here`.
+6. Repeat 4–5 in the other direction (C sends, A receives `hops=1`).
+
+> **Why block instead of walking apart?** Two reasons, both learned the hard
+> way. First, discovery range materially exceeds write range (§10, §13) and
+> both edges are fuzzy — "far enough apart" is never something you can
+> assert. Second and worse: if *both* paths exist, de-dup hides the relay.
+> A's direct copy (`hops=0`) and B's relayed copy (`hops=1`) race, direct
+> usually wins on one hop instead of two, C logs `hops=0` and drops the
+> relayed copy as a dup. **The relay worked and the log says it didn't.**
+> Blocking removes the direct path outright, so `hops=1` is unambiguous.
+
+#### 3b — relay across real distance
+
+Only after 3a passes. This is the one that needs geography.
+
+1. **Unblock everything** (tap the greyed chips again) — 3b tests real radio,
+   so software blocks must be off or you prove nothing about range.
+2. Put A and C far enough apart that neither can *write* to the other. Watch
+   the chip hint, not just the colour: you want **`advert only`**, or no peer
+   at all. Green with `write ok` means still connected — go further.
+3. Verify the negative control **before** introducing B: A: Send. It must
+   fail to C (`TIMED OUT` / `FAILED`) and C must log no `RX`. If C receives
+   anything, they're still in write range — go further apart.
+4. Place B between them, Advertise + Scan + relay all on, showing both peers.
+5. **A: Send.** C should log `hops=1`.
+6. **B: relay OFF** (or walk B away). Send again — delivery to C must stop.
+
+Record the A↔C distance and B's position. That distance *is* the multi-hop
+range result.
 
 ### Day 4 — measurements
 
