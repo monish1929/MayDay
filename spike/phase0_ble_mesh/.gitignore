@@ -37,3 +37,10 @@ android/**
 # kotlin.incremental=false — works around a Windows cross-drive Kotlin
 # compiler bug (repo on D:, pub cache on C:). Without this the build fails.
 !android/gradle.properties
+
+# Build artifacts generated inside the vendored plugin (see PHASE0_MESH_FINDINGS.md
+# §9). The vendored *source* is committed because it carries the TX_POWER_HIGH
+# patch; Gradle's caches are not a decision and must not be. Note `android/**`
+# above is anchored to this directory, so it does not cover vendor/.
+vendor/**/.gradle/
+vendor/**/build/
