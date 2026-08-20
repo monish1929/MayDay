@@ -1,0 +1,26 @@
+name: mayday
+description: "Offline Disaster Response System"
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.11.5
+
+dependencies:
+  flutter:
+    sdk: flutter
+  maplibre_gl: ^0.26.2
+  path_provider: ^2.1.0
+  sqlite3: ^2.4.1
+  sqlite3_flutter_libs: ^0.5.24
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/tiles/placeholder.mbtiles
+    - assets/map_style.json
