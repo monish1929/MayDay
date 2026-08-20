@@ -94,11 +94,11 @@ Two things worth getting right early because they're easy to get backwards:
 
 ### Day 5 — Volunteer ops screen
 
-- [ ] Rescue queue, sorted by `dispatchPriority` then trust
-- [ ] Report review list
-- [ ] Resource coordination view
-- [ ] QR scanner screen skeleton (camera permission, viewfinder — no verification logic yet, that's Phase 3)
-- [ ] All showing mock data
+- [✓] Rescue queue, sorted by `dispatchPriority` then trust
+- [✓] Report review list
+- [✓] Resource coordination view
+- [✓] QR scanner screen skeleton (camera permission, viewfinder — no verification logic yet, that's Phase 3)
+- [✓] All showing mock data
 
 ### Exit criteria
 
@@ -182,6 +182,7 @@ Update after each work session. Short entries — this is for the team sync.
 | 2026-08-20 | c/app-shell | Day 3 complete — Rescue (Individual/Group/Proxy incl. headcount + 80-char proxy note), Report (hazard kind + 80-char note), Contribute (canonical 4 categories + pledged count) bottom sheet forms built in lib/ui/forms/, wired to main_screen.dart buttons, all submits construct correct payload classes and print to console. Verified via logcat against CLAIM_SCHEMA.md §8 — all enum values, payload field names, and null handling (Individual has no headcount, Proxy headcount/note optional) confirmed correct on-device. | None — ready for Day 4 (pins and layers). |
 | 2026-08-20 | c/app-shell | Day 4 complete — Emergency/Resource layer toggle, distinct pin rendering per type/trust/priority, confirmation counts on hazard pins, display-only clustering at low zoom (< 11.5), time-driven aging SOS urgency escalation (pulsing halo & speed scaled across 1hr/3hr/6hr+ tiers). Resource range display deferred to Week 2. | Ready for Day 5 (Volunteer ops screen). |
 | 2026-08-20 | c/app-shell | Day 4 on-device verification complete. Found and fixed two bugs post-implementation: (1) pin projection ran on onMapCreated before MapLibre's style/camera was ready, silently dropping all pins on first launch — fixed by moving initial projection to onStyleLoadedCallback plus a bounded single retry, with the previously-silent toScreenLocation failures now logged; (2) toScreenLocation() returns physical device pixels but Positioned expects logical pixels, placing every pin off-screen — fixed by dividing by MediaQuery.devicePixelRatio in _buildPinOverlayWidgets(). Confirmed on-device: all three trust tiers render correctly, aging escalates visibly across tier 1 (sos-002, ~2hr) and tier 3 (sos-003, ~6.5hr), clustering separates into individual pins at high zoom and groups at low zoom with detail sheet showing each claim separately, both Emergency and Resource layers toggle correctly, resource pins show single available count with no fabricated range. | None — Day 4 fully closed. Ready for Day 5. |
+| 2026-08-20 | c/app-shell | Day 5 complete — volunteer_ops_screen.dart built with three tabs: rescue queue (sorted by dispatchPriority then claimTrust, older-claim tiebreaker), report review (sorted by confirmationCount descending), resource coordination (category filter across canonical four, showing payload.available with pledged/claimed breakdown, no fabricated range). qr_scanner_screen.dart added as a viewfinder + permission-handling skeleton only, no decode/verification logic, per CLAIM_SCHEMA.md §6.2 Phase 3 scope. Refactored shared relative-time and aging-tier logic (previously duplicated across claim_pin_widget.dart and claim_detail_sheet.dart) into lib/ui/models/claim_display_helpers.dart, now consumed by all three call sites including the new rescue queue. router.dart was touched to register the /qr-scanner route — minimal necessary addition, flagged here since it wasn't in original scope. Verified on-device: rescue queue sort order, report sort order, and resource category filtering all match mock data exactly; all list rows correctly open ClaimDetailSheet. | One open visual bug found during testing — see open questions below. |
 
 ### Open questions I'm carrying
 
@@ -190,6 +191,7 @@ Update after each work session. Short entries — this is for the team sync.
 - [ ] How to visually distinguish Proxy SOS from self-raised SOS — reporter details may be less reliable, and that should be legible at a glance
 - [ ] Rendering the "2–6 packets" uncertainty range without looking like a bug to the user
 - [ ] Resource availability range ('2–6 packets') needs real replica-conflict data from B's store (CLAIM_SCHEMA.md §8.1) — not implementable against Week 1 mock data. Deferred to Week 2.
+- [ ] Aging rescue queue cards (sos-003, sos-001) show a stray diagonal yellow/black hazard-stripe element with rotated, clipped text on the right edge of the card, not present on non-aging cards like sos-002. Not part of the original Day 5 spec — likely a leftover or misconfigured decorative widget. Needs a code look in volunteer_ops_screen.dart's rescue card builder before this is considered fully clean.
 
 ### Screens status
 
@@ -201,5 +203,6 @@ Update after each work session. Short entries — this is for the team sync.
 | Rescue form | ✓ | ☐ | incl. Proxy |
 | Report form | ✓ | ☐ | |
 | Contribute form | ✓ | ☐ | |
-| Volunteer queue | ☐ | ☐ | |
-| QR scanner | ☐ | ☐ | logic in Phase 3 |
+| Volunteer queue | ✓ | ☐ | incl. rescue/report/resource tabs |
+| QR scanner | ✓ | ☐ | logic in Phase 3 — skeleton only |
+
