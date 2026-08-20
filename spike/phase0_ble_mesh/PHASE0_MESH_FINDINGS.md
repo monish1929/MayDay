@@ -24,7 +24,13 @@ removed), is in `spike/phase0_ble_mesh/README.md` → "Day 3".
 
 ### 1.2 Realistic range and discovery time
 
-**Answer:** _not yet tested_
+**Answer:** _still informal, not a controlled Day 4 measurement._ Indoors:
+no write-range boundary found within a home, under 10m total (§11).
+Outdoors: discovery has been seen persisting out to ~100m, badly (§12);
+write range looks to be materially shorter, roughly ~50m by informal
+estimate (§13). Both outdoor figures are byproducts of other tests, not
+walked/marked-distance measurements — that's still the real Day 4 task.
+Discovery time: 1 clean best-of-10 sample, 245ms; 9 more runs still needed.
 
 ### 1.3 Continuous vs duty-cycled scanning battery cost
 
@@ -48,7 +54,7 @@ fragmentation feature.
 | Measurement | Result | Device / conditions |
 |---|---|---|
 | Range, indoors through walls | **Never found a hard write-range boundary, over just ~4-6m total distance.** RSSI -45 to -79 side-by-side with the stationary phone (asymmetric — see §11), -39/-41 a short distance away, -83/-84 through one wall+bathroom, -89 to -94 at the far corner (full width of home + a wall) — see §11. Free-space loss over 4-6m is only ~15-16 dB, so the ~50 dB drop observed is 30+ dB of wall/obstruction attenuation, not distance — says more about this home's wall construction than about BLE's raw range. Writes (including 512B probes) mostly still succeeded even at -91 to -94; some `TIMED OUT` failures scattered across the range, not cleanly correlated with weak RSSI alone (one occurred at -41, strong signal) | 2 phones, labels A/B — physical models TBD, confirm which. TX-power-HIGH + write-timeout build. Closed doors throughout, one leg separated by a wall + bathroom |
-| Range, outdoors line of sight | Discovery still working (intermittently) at ~40m; writes already failing (status 133) at that distance — see §10. **Not an official measurement**, informal check. A separate later data point (§12, TX-HIGH build) had discovery still succeeding, badly, at ~100m — writes still failing there too. Neither is a controlled walked measurement; **still needs a real Day 4 re-run on the TX-HIGH build** | Redmi + OPPO, open pathway, no walls, light foot traffic. Medium TX power (pre-§9 patch) |
+| Range, outdoors line of sight | Discovery still working (intermittently) at ~40m; writes already failing (status 133) at that distance — see §10. **Not an official measurement**, informal check. Two later data points on the TX-HIGH build: discovery still succeeding, badly, at ~100m (§12, byproduct of a relay test); write range separately estimated at roughly ~50m, RSSI-correlated across a session (§13, informal, distance not walked/marked). None of the three is a controlled walked measurement; **still needs a real Day 4 re-run on the TX-HIGH build with marked distances** | §10: Redmi + OPPO, medium TX (pre-patch). §12/§13: TX-HIGH build, device models not confirmed for these sessions |
 | Discovery time, best of 10 | 245ms (1 sample, not yet a real best-of-10) | B scanning for A, A already advertising. Same room, both M2101K7BI |
 | Discovery time, worst of 10 | | |
 | Battery, 1 hr continuous scan | | |
@@ -654,3 +660,68 @@ Send: Advertise, Scan, relay. Everything needed to run it correctly already
 works — A and C both advertise/scan/discover/attempt-writes correctly, and
 B receives correctly in both directions. The only missing piece was B's
 Scan toggle.
+
+---
+
+## 13. Outdoor write-range test, two phones — write range roughly ~50m, shorter than discovery range
+
+**2026-08-20, later same day. Two phones only (A/B).** Outdoor, line of
+sight. Distance: **~50m, by the tester's own estimate after the fact — not
+walked or marked during the test.** Treat the specific number the same way
+as §10's ~40m figure: informal, directional, not a controlled measurement.
+
+### What the logs show
+
+Both phones stayed discoverable throughout — no `FOUND` gaps, liveness held.
+But writes were unreliable early in the session and increasingly reliable
+later:
+
+| Phase | RSSI (A's view of B) | Write outcome to the live peer |
+|---|---|---|
+| Early (12:48–12:49) | -90 to -95 (weak) | `TIMED OUT`, mixed with occasional `OK` |
+| Mid (12:50–12:51) | -85 to -74 | Mostly `OK`, some `FAILED (status 133)` |
+| Late (12:52–12:53) | -65, then -55, -56 (strong) | `OK` |
+
+A 40 dB swing across one session is too large to be pure link-asymmetry
+noise at a fixed separation (§11's P0 case showed ~34 dB asymmetry, but that
+was two phones standing still side by side) — the more likely read is the
+phones were not held at a constant ~50m the whole time, and closed the gap
+as the test went on. Read the RSSI column as the honest distance signal
+here, not the elapsed time.
+
+### The mechanism — same one already documented in §10
+
+Discovery is passive reception of a repeated one-way broadcast; a write
+needs a full GATT connect-and-write handshake to complete cleanly in both
+directions. The weaker/less stable the link, the more likely that
+multi-step handshake fails partway — surfacing as Android's generic
+`status: 133`, thrown from either `onConnectionStateChange` (`Connect
+failed with status: 133`) or `onCharacteristicWrite` (`Write characteristic
+failed with status: 133.`) depending on which step broke. This is exactly
+the write-range-shorter-than-discovery-range gap §10 first caught at ~40m
+(pre-TX-HIGH) — this run reproduces it on the TX-HIGH build with real RSSI
+correlation across a whole session rather than one failed attempt.
+
+### One artifact to discount, not a range effect
+
+Each phone's log carries one peer UUID that **never once succeeds**, at any
+RSSI, for the entire session (`78d88df4380b` in A's log, `70f425cd51a8` in
+B's log) — while a second, "live" UUID for the same physical peer succeeds
+increasingly often as signal improves. This is §7's BLE-address-rotation
+finding again: the dead UUID is a stale `_peers` entry from an earlier
+advertising identity that no longer exists on the peer, so it fails
+unconditionally, at any distance. Only the live UUID's success rate is
+meaningful signal about range; the dead one would show 100% failure even
+standing side by side.
+
+### Reading this alongside §12
+
+§12's outdoor-adjacent finding was discovery persisting (badly) out to
+~100m; this session puts the write-range boundary somewhere in the ~50m
+neighborhood on the same TX-HIGH build. Taken together they're the same
+story from two angles: **discovery range is meaningfully longer than write
+range**, and the gap is now roughly bracketed rather than just asserted.
+Neither number is a controlled, walked, marked-distance measurement yet —
+that's still the real Day 4 outdoor task, and it should record RSSI at
+fixed, known distances rather than inferring range from an unplanned
+session after the fact.
