@@ -1,38 +1,59 @@
 import 'package:flutter/material.dart';
+import 'package:mayday/ui/map/claim_detail_sheet.dart';
 import 'package:mayday/ui/models/models.dart';
+import 'package:mayday/ui/screens/qr_scanner_screen.dart';
 import 'package:mayday/ui/theme/app_theme.dart';
 
 /// Volunteer ops screen — PERSON_C.md §3 Day 5.
 ///
-/// Extra screen visible only to Volunteer/NGO-Authority nodes.
-/// Three sections: rescue queue, report review, resource coordination.
+/// Dedicated triage and coordination screen for verified volunteer nodes.
+/// Three core views in a single screen:
+/// 1. Rescue Queue: active SOS / Proxy SOS sorted by dispatchPriority then claimTrust.
+/// 2. Report Review: active hazard reports sorted by confirmation count descending.
+/// 3. Resource Coordination: active resources with category filtering and real availability.
 ///
-/// Visual Design:
-/// - Header: Deep Navy Blue (#12355B)
-/// - Background: Very Light Cream (#FFFDF5)
-/// - Cards: Flat White (#FFFFFF) with clean borders (#D8E2EC)
-/// - High contrast, accessible typography (#1F2933, #52606D)
-/// - Trust Tiers & Priority Badges mapped cleanly to the color hierarchy.
-///
-/// Sorted by dispatchPriority then claimTrust — PERSON_C.md §3 Day 5.
-class VolunteerOpsScreen extends StatelessWidget {
+/// Header includes direct access to the QR Scanner skeleton (Phase 3 resolution scaffold).
+class VolunteerOpsScreen extends StatefulWidget {
   static const routeName = '/volunteer-ops';
 
   const VolunteerOpsScreen({super.key});
 
   @override
+  State<VolunteerOpsScreen> createState() => _VolunteerOpsScreenState();
+}
+
+class _VolunteerOpsScreenState extends State<VolunteerOpsScreen> {
+  // Selected category filter for the Resource coordination tab (null = All)
+  ResourceCategory? _selectedResourceCategory;
+
+  @override
   Widget build(BuildContext context) {
-    // Get mock claims for display
-    final claims = MockData.generateMockClaims();
-    final sosClaims = claims
+    // Generate mock claims for Week 1 — will be replaced by B's live SQLite queries in Week 2
+    final allClaims = MockData.generateMockClaims();
+
+    // ─── 1. Rescue Queue (active SOS / SOS_PROXY) ───────────────────
+    final rescueClaims = allClaims
         .where((c) =>
-            c.type == ClaimType.sos || c.type == ClaimType.sosProxy)
-        .toList();
-    final hazardClaims = claims
-        .where((c) => c.type == ClaimType.hazardReport)
-        .toList();
-    final resourceClaims = claims
-        .where((c) => c.type == ClaimType.resource)
+            (c.type == ClaimType.sos || c.type == ClaimType.sosProxy) &&
+            c.status == ClaimStatus.active)
+        .toList()
+      ..sort(ClaimDisplayHelpers.compareRescueClaims);
+
+    // ─── 2. Hazard Reports (active HAZARD_REPORT) ───────────────────
+    final hazardClaims = allClaims
+        .where((c) =>
+            c.type == ClaimType.hazardReport && c.status == ClaimStatus.active)
+        .toList()
+      ..sort(ClaimDisplayHelpers.compareHazardClaims);
+
+    // ─── 3. Resources (active RESOURCE) ─────────────────────────────
+    final resourceClaims = allClaims
+        .where((c) =>
+            c.type == ClaimType.resource &&
+            c.status == ClaimStatus.active &&
+            (_selectedResourceCategory == null ||
+                (c.payload as ResourcePayload).category ==
+                    _selectedResourceCategory))
         .toList();
 
     return DefaultTabController(
@@ -48,318 +69,845 @@ class VolunteerOpsScreen extends StatelessWidget {
           ),
           title: const Row(
             children: [
-              Icon(Icons.verified_user_outlined, color: Colors.white, size: 20),
+              Icon(Icons.assignment_outlined, color: Colors.white, size: 20),
               SizedBox(width: 8),
               Text(
                 'Volunteer Ops',
                 style: TextStyle(
                   color: Colors.white,
-                  fontWeight: FontWeight.w700,
+                  fontWeight: FontWeight.w800,
                   fontSize: 18,
+                  letterSpacing: 0.3,
                 ),
               ),
             ],
           ),
+          actions: [
+            // QR Scanner Screen Entry Action
+            IconButton(
+              icon: const Icon(Icons.qr_code_scanner, color: Colors.white),
+              tooltip: 'Scan QR Verification',
+              onPressed: () {
+                Navigator.pushNamed(context, QRScannerScreen.routeName);
+              },
+            ),
+          ],
           bottom: TabBar(
-            indicatorColor: Colors.white,
+            indicatorColor: AppColors.amberYellow,
             indicatorWeight: 3,
             labelColor: Colors.white,
             unselectedLabelColor: Colors.white70,
-            labelStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
-            unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w500, fontSize: 13),
-            tabs: const [
-              Tab(icon: Icon(Icons.sos_rounded, size: 18), text: 'Rescue'),
+            labelStyle: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
+            unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+            tabs: [
               Tab(
-                icon: Icon(Icons.report_problem_outlined, size: 18),
-                text: 'Reports',
+                icon: const Icon(Icons.sos_rounded, size: 18),
+                text: 'Rescue (${rescueClaims.length})',
               ),
               Tab(
-                icon: Icon(Icons.inventory_2_outlined, size: 18),
-                text: 'Resources',
+                icon: const Icon(Icons.report_problem_outlined, size: 18),
+                text: 'Reports (${hazardClaims.length})',
+              ),
+              Tab(
+                icon: const Icon(Icons.inventory_2_outlined, size: 18),
+                text: 'Resources (${resourceClaims.length})',
               ),
             ],
           ),
         ),
         body: TabBarView(
           children: [
-            // ─── Rescue queue ──────────────────────────────────────
-            _buildClaimList(
-              claims: sosClaims,
-              emptyMessage: 'No active rescue requests',
-              emptyIcon: Icons.check_circle_outline,
-            ),
+            // ─── Rescue Queue ───────────────────────────────────────
+            _buildRescueQueueTab(context, rescueClaims),
 
-            // ─── Report review ─────────────────────────────────────
-            _buildClaimList(
-              claims: hazardClaims,
-              emptyMessage: 'No hazard reports to review',
-              emptyIcon: Icons.landscape_outlined,
-            ),
+            // ─── Report Review ──────────────────────────────────────
+            _buildReportReviewTab(context, hazardClaims),
 
-            // ─── Resource coordination ─────────────────────────────
-            _buildClaimList(
-              claims: resourceClaims,
-              emptyMessage: 'No resources pinned',
-              emptyIcon: Icons.inventory_2_outlined,
-            ),
+            // ─── Resource Coordination ──────────────────────────────
+            _buildResourceCoordinationTab(context, resourceClaims),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildClaimList({
-    required List<MockClaim> claims,
-    required String emptyMessage,
-    required IconData emptyIcon,
-  }) {
+  // ═══════════════════════════════════════════════════════════════════
+  // 1. RESCUE QUEUE TAB
+  // ═══════════════════════════════════════════════════════════════════
+  Widget _buildRescueQueueTab(
+    BuildContext context,
+    List<MockClaim> claims,
+  ) {
     if (claims.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(emptyIcon, size: 48, color: AppColors.secondaryText.withAlpha(100)),
-            const SizedBox(height: 12),
-            Text(
-              emptyMessage,
-              style: const TextStyle(
-                color: AppColors.secondaryText,
-                fontSize: 14,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-          ],
-        ),
+      return _buildEmptyState(
+        icon: Icons.check_circle_outline,
+        title: 'Rescue Queue Clear',
+        subtitle: 'No active SOS or Proxy SOS claims found in the mesh.',
       );
     }
 
-    return ListView.builder(
+    return ListView.separated(
       padding: const EdgeInsets.all(16),
       itemCount: claims.length,
+      separatorBuilder: (context, index) => const SizedBox(height: 12),
       itemBuilder: (context, index) {
         final claim = claims[index];
-        return _ClaimCard(claim: claim);
+        final isProxy = claim.type == ClaimType.sosProxy;
+        final isAging = ClaimDisplayHelpers.isAgingSos(claim);
+        final trust = ClaimDisplayHelpers.trustConfig(claim.claimTrust);
+        final priority = ClaimDisplayHelpers.priorityConfig(claim.dispatchPriority);
+        final relTime = ClaimDisplayHelpers.relativeTimeLabel(claim.mockCreatedAt);
+
+        return InkWell(
+          onTap: () => ClaimDetailSheet.show(context, claim),
+          borderRadius: BorderRadius.circular(16),
+          child: Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: AppColors.surfaceWhite,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: isAging
+                    ? AppColors.darkRed
+                    : (isProxy ? AppColors.amberDark.withAlpha(150) : AppColors.borderSubtle),
+                width: isAging ? 2.0 : 1.5,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withAlpha(15),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Top row: Type title + Trust & Priority badges
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(6),
+                      decoration: BoxDecoration(
+                        color: AppColors.redLight,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Icon(
+                        isProxy ? Icons.person_pin_circle_outlined : Icons.sos_rounded,
+                        color: AppColors.darkRed,
+                        size: 20,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            isProxy ? 'Proxy SOS' : 'Self-Raised SOS',
+                            style: const TextStyle(
+                              color: AppColors.primaryText,
+                              fontWeight: FontWeight.w800,
+                              fontSize: 15,
+                            ),
+                          ),
+                          Text(
+                            'ID: ${claim.id}',
+                            style: const TextStyle(
+                              color: AppColors.secondaryText,
+                              fontSize: 11,
+                              fontFamily: 'monospace',
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    _buildBadge(trust.label, trust.fg, trust.bg, trust.border),
+                    const SizedBox(width: 6),
+                    _buildBadge(priority.label, priority.fg, priority.bg, priority.border),
+                  ],
+                ),
+
+                const SizedBox(height: 12),
+
+                // Details: Headcount & Coordinates
+                _buildRescueDetailsRow(claim),
+
+                // Aging Urgency Notice Banner
+                if (isAging) ...[
+                  const SizedBox(height: 10),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: AppColors.redLight,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: AppColors.darkRed.withAlpha(120)),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.warning_amber_rounded, size: 16, color: AppColors.darkRed),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            'Aging SOS: Unresolved for $relTime — escalated response priority',
+                            style: const TextStyle(
+                              color: AppColors.darkRed,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+
+                const SizedBox(height: 10),
+                const Divider(height: 1, color: AppColors.borderSubtle),
+                const SizedBox(height: 8),
+
+                // Footer: relative time & inspect action hint
+                Row(
+                  children: [
+                    const Icon(Icons.access_time, size: 13, color: AppColors.secondaryText),
+                    const SizedBox(width: 4),
+                    Text(
+                      relTime,
+                      style: const TextStyle(
+                        color: AppColors.secondaryText,
+                        fontSize: 11,
+                        fontStyle: FontStyle.italic,
+                      ),
+                    ),
+                    const Spacer(),
+                    const Text(
+                      'Tap to triage',
+                      style: TextStyle(
+                        color: AppColors.strongBlue,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const Icon(Icons.chevron_right, size: 16, color: AppColors.strongBlue),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
       },
     );
   }
-}
 
-class _ClaimCard extends StatelessWidget {
-  final MockClaim claim;
-
-  const _ClaimCard({required this.claim});
-
-  @override
-  Widget build(BuildContext context) {
-    final typeColor = _colorForType(claim.type);
-    final trustConfig = _trustConfig(claim.claimTrust);
-    final priorityConfig = _priorityConfig(claim.dispatchPriority);
-
-    return Card(
-      color: AppColors.surfaceWhite,
-      margin: const EdgeInsets.only(bottom: 12),
-      elevation: 0,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(14),
-        side: const BorderSide(color: AppColors.borderSubtle, width: 1.5),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Header row — type + trust + priority
-            Row(
-              children: [
-                Icon(_iconForType(claim.type), color: typeColor, size: 20),
-                const SizedBox(width: 8),
-                Text(
-                  _labelForType(claim.type),
-                  style: TextStyle(
-                    color: typeColor,
-                    fontWeight: FontWeight.w800,
-                    fontSize: 15,
-                  ),
-                ),
-                const Spacer(),
-                _buildBadge(trustConfig.label, trustConfig.fg, trustConfig.bg, trustConfig.border),
-                const SizedBox(width: 6),
-                _buildBadge(priorityConfig.label, priorityConfig.fg, priorityConfig.bg, priorityConfig.border),
-              ],
-            ),
-
-            const SizedBox(height: 10),
-
-            // Claim ID
-            Text(
-              'ID: ${claim.id}',
-              style: const TextStyle(
-                color: AppColors.secondaryText,
-                fontSize: 11,
-                fontFamily: 'monospace',
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-
-            const SizedBox(height: 6),
-
-            // Status & Hops
-            Row(
-              children: [
-                Text(
-                  'Status: ${claim.status.name.toUpperCase()}',
-                  style: const TextStyle(
-                    color: AppColors.primaryText,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(width: 14),
-                Text(
-                  'Hops left: ${claim.hopLimit}',
-                  style: const TextStyle(
-                    color: AppColors.secondaryText,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ],
-            ),
-
-            // Payload-specific info
-            if (claim.payload is SosPayload) ...[
-              const SizedBox(height: 8),
-              _buildPayloadInfo(claim.payload as SosPayload),
-            ] else if (claim.payload is SosProxyPayload) ...[
-              const SizedBox(height: 8),
-              _buildProxyInfo(claim.payload as SosProxyPayload),
-            ] else if (claim.payload is HazardReportPayload) ...[
-              const SizedBox(height: 8),
-              _buildHazardInfo(claim.payload as HazardReportPayload),
-            ] else if (claim.payload is ResourcePayload) ...[
-              const SizedBox(height: 8),
-              _buildResourceInfo(claim.payload as ResourcePayload),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildPayloadInfo(SosPayload payload) {
-    return Row(
-      children: [
-        const Icon(Icons.location_on_outlined, size: 16, color: AppColors.secondaryText),
-        const SizedBox(width: 4),
-        Text(
-          '${payload.location.lat.toStringAsFixed(4)}, ${payload.location.lon.toStringAsFixed(4)}',
-          style: const TextStyle(
-            color: AppColors.primaryText,
-            fontSize: 12,
-            fontWeight: FontWeight.w500,
-          ),
-        ),
-        if (payload.headcount != null) ...[
-          const SizedBox(width: 14),
+  Widget _buildRescueDetailsRow(MockClaim claim) {
+    if (claim.payload is SosPayload) {
+      final p = claim.payload as SosPayload;
+      return Row(
+        children: [
           const Icon(Icons.people_outline, size: 16, color: AppColors.secondaryText),
-          const SizedBox(width: 4),
+          const SizedBox(width: 6),
           Text(
-            _headcountLabel(payload.headcount!),
+            p.headcount != null
+                ? ClaimDisplayHelpers.headcountLabel(p.headcount!)
+                : 'Individual (Single person)',
             style: const TextStyle(
               color: AppColors.primaryText,
-              fontSize: 12,
+              fontSize: 13,
               fontWeight: FontWeight.w600,
             ),
           ),
+          const Spacer(),
+          const Icon(Icons.location_on_outlined, size: 14, color: AppColors.secondaryText),
+          const SizedBox(width: 4),
+          Text(
+            '${p.location.lat.toStringAsFixed(4)}, ${p.location.lon.toStringAsFixed(4)}',
+            style: const TextStyle(
+              color: AppColors.secondaryText,
+              fontSize: 12,
+              fontFamily: 'monospace',
+            ),
+          ),
         ],
+      );
+    } else if (claim.payload is SosProxyPayload) {
+      final p = claim.payload as SosProxyPayload;
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.people_outline, size: 16, color: AppColors.secondaryText),
+              const SizedBox(width: 6),
+              Text(
+                p.headcount != null
+                    ? 'Headcount: ${ClaimDisplayHelpers.headcountLabel(p.headcount!)}'
+                    : 'Proxy (Reported for neighbour)',
+                style: const TextStyle(
+                  color: AppColors.primaryText,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const Spacer(),
+              const Icon(Icons.location_on_outlined, size: 14, color: AppColors.secondaryText),
+              const SizedBox(width: 4),
+              Text(
+                '${p.location.lat.toStringAsFixed(4)}, ${p.location.lon.toStringAsFixed(4)}',
+                style: const TextStyle(
+                  color: AppColors.secondaryText,
+                  fontSize: 12,
+                  fontFamily: 'monospace',
+                ),
+              ),
+            ],
+          ),
+          if (p.proxyNote != null) ...[
+            const SizedBox(height: 8),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: AppColors.creamBackground,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: AppColors.borderSubtle),
+              ),
+              child: Text(
+                '"${p.proxyNote}"',
+                style: const TextStyle(
+                  color: AppColors.primaryText,
+                  fontSize: 12,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+            ),
+          ],
+        ],
+      );
+    }
+    return const SizedBox.shrink();
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  // 2. REPORT REVIEW TAB
+  // ═══════════════════════════════════════════════════════════════════
+  Widget _buildReportReviewTab(
+    BuildContext context,
+    List<MockClaim> claims,
+  ) {
+    if (claims.isEmpty) {
+      return _buildEmptyState(
+        icon: Icons.check_circle_outline,
+        title: 'No Hazard Reports',
+        subtitle: 'No active hazard reports currently need review.',
+      );
+    }
+
+    return ListView.separated(
+      padding: const EdgeInsets.all(16),
+      itemCount: claims.length,
+      separatorBuilder: (context, index) => const SizedBox(height: 12),
+      itemBuilder: (context, index) {
+        final claim = claims[index];
+        final payload = claim.payload as HazardReportPayload;
+        final trust = ClaimDisplayHelpers.trustConfig(claim.claimTrust);
+        final priority = ClaimDisplayHelpers.priorityConfig(claim.dispatchPriority);
+        final relTime = ClaimDisplayHelpers.relativeTimeLabel(claim.mockCreatedAt);
+
+        return InkWell(
+          onTap: () => ClaimDetailSheet.show(context, claim),
+          borderRadius: BorderRadius.circular(16),
+          child: Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: AppColors.surfaceWhite,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: AppColors.borderSubtle, width: 1.5),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withAlpha(15),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Top row: Hazard kind + Confirm count + Badges
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(6),
+                      decoration: BoxDecoration(
+                        color: AppColors.amberLight,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Icon(
+                        ClaimDisplayHelpers.iconForHazard(payload.hazardType),
+                        color: AppColors.amberDark,
+                        size: 20,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            payload.hazardType.name.toUpperCase(),
+                            style: const TextStyle(
+                              color: AppColors.amberDark,
+                              fontWeight: FontWeight.w800,
+                              fontSize: 15,
+                            ),
+                          ),
+                          Text(
+                            '${payload.confirmationCount} Independent Reports Merged',
+                            style: const TextStyle(
+                              color: AppColors.primaryText,
+                              fontWeight: FontWeight.w600,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    _buildBadge(trust.label, trust.fg, trust.bg, trust.border),
+                    const SizedBox(width: 6),
+                    _buildBadge(priority.label, priority.fg, priority.bg, priority.border),
+                  ],
+                ),
+
+                const SizedBox(height: 10),
+
+                // Location coordinates
+                Row(
+                  children: [
+                    const Icon(Icons.location_on_outlined, size: 14, color: AppColors.secondaryText),
+                    const SizedBox(width: 4),
+                    Text(
+                      '${payload.location.lat.toStringAsFixed(4)}, ${payload.location.lon.toStringAsFixed(4)}',
+                      style: const TextStyle(
+                        color: AppColors.secondaryText,
+                        fontSize: 12,
+                        fontFamily: 'monospace',
+                      ),
+                    ),
+                    const Spacer(),
+                    Text(
+                      'Hops left: ${claim.hopLimit}',
+                      style: const TextStyle(
+                        color: AppColors.secondaryText,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
+                ),
+
+                if (payload.note != null) ...[
+                  const SizedBox(height: 8),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: AppColors.creamBackground,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: AppColors.borderSubtle),
+                    ),
+                    child: Text(
+                      '"${payload.note}"',
+                      style: const TextStyle(
+                        color: AppColors.primaryText,
+                        fontSize: 12,
+                        fontStyle: FontStyle.italic,
+                      ),
+                    ),
+                  ),
+                ],
+
+                const SizedBox(height: 10),
+                const Divider(height: 1, color: AppColors.borderSubtle),
+                const SizedBox(height: 8),
+
+                // Footer: relative time & inspect action hint
+                Row(
+                  children: [
+                    const Icon(Icons.access_time, size: 13, color: AppColors.secondaryText),
+                    const SizedBox(width: 4),
+                    Text(
+                      relTime,
+                      style: const TextStyle(
+                        color: AppColors.secondaryText,
+                        fontSize: 11,
+                        fontStyle: FontStyle.italic,
+                      ),
+                    ),
+                    const Spacer(),
+                    const Text(
+                      'Review report',
+                      style: TextStyle(
+                        color: AppColors.amberDark,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const Icon(Icons.chevron_right, size: 16, color: AppColors.amberDark),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  // 3. RESOURCE COORDINATION TAB
+  // ═══════════════════════════════════════════════════════════════════
+  Widget _buildResourceCoordinationTab(
+    BuildContext context,
+    List<MockClaim> claims,
+  ) {
+    return Column(
+      children: [
+        // Category Filter Chips Header
+        Container(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+          decoration: const BoxDecoration(
+            color: AppColors.surfaceWhite,
+            border: Border(
+              bottom: BorderSide(color: AppColors.borderSubtle, width: 1),
+            ),
+          ),
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                _buildCategoryFilterChip('All', null),
+                const SizedBox(width: 8),
+                _buildCategoryFilterChip(
+                  'Food & Water',
+                  ResourceCategory.foodWater,
+                  icon: Icons.restaurant,
+                ),
+                const SizedBox(width: 8),
+                _buildCategoryFilterChip(
+                  'Shelter',
+                  ResourceCategory.shelter,
+                  icon: Icons.home_outlined,
+                ),
+                const SizedBox(width: 8),
+                _buildCategoryFilterChip(
+                  'Medical',
+                  ResourceCategory.medical,
+                  icon: Icons.medical_services_outlined,
+                ),
+                const SizedBox(width: 8),
+                _buildCategoryFilterChip(
+                  'Equipment',
+                  ResourceCategory.equipment,
+                  icon: Icons.build_outlined,
+                ),
+              ],
+            ),
+          ),
+        ),
+
+        // Resource list
+        Expanded(
+          child: claims.isEmpty
+              ? _buildEmptyState(
+                  icon: Icons.inventory_2_outlined,
+                  title: 'No Resources Found',
+                  subtitle: 'No active resource claims in the selected category.',
+                )
+              : ListView.separated(
+                  padding: const EdgeInsets.all(16),
+                  itemCount: claims.length,
+                  separatorBuilder: (context, index) => const SizedBox(height: 12),
+                  itemBuilder: (context, index) {
+                    final claim = claims[index];
+                    final payload = claim.payload as ResourcePayload;
+                    final trust = ClaimDisplayHelpers.trustConfig(claim.claimTrust);
+                    final priority = ClaimDisplayHelpers.priorityConfig(claim.dispatchPriority);
+                    final relTime = ClaimDisplayHelpers.relativeTimeLabel(claim.mockCreatedAt);
+
+                    return InkWell(
+                      onTap: () => ClaimDetailSheet.show(context, claim),
+                      borderRadius: BorderRadius.circular(16),
+                      child: Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: AppColors.surfaceWhite,
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: AppColors.borderSubtle, width: 1.5),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withAlpha(15),
+                              blurRadius: 8,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Header: Category title + Available Count + Badges
+                            Row(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.all(6),
+                                  decoration: BoxDecoration(
+                                    color: AppColors.greenLight,
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Icon(
+                                    ClaimDisplayHelpers.iconForResource(payload.category),
+                                    color: AppColors.darkGreen,
+                                    size: 20,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        ClaimDisplayHelpers.labelForResourceCategory(payload.category),
+                                        style: const TextStyle(
+                                          color: AppColors.darkGreen,
+                                          fontWeight: FontWeight.w800,
+                                          fontSize: 15,
+                                        ),
+                                      ),
+                                      Text(
+                                        '${payload.available} Available Units',
+                                        style: const TextStyle(
+                                          color: AppColors.primaryText,
+                                          fontWeight: FontWeight.w700,
+                                          fontSize: 13,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                _buildBadge(trust.label, trust.fg, trust.bg, trust.border),
+                                const SizedBox(width: 6),
+                                _buildBadge(priority.label, priority.fg, priority.bg, priority.border),
+                              ],
+                            ),
+
+                            const SizedBox(height: 12),
+
+                            // Pledged vs Claimed breakdown (availability is computed: max(0, pledged - claimed))
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                              decoration: BoxDecoration(
+                                color: AppColors.creamBackground,
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(color: AppColors.borderSubtle),
+                              ),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                                children: [
+                                  Column(
+                                    children: [
+                                      const Text(
+                                        'PLEDGED',
+                                        style: TextStyle(
+                                          color: AppColors.secondaryText,
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        '${payload.pledgedCount}',
+                                        style: const TextStyle(
+                                          color: AppColors.primaryText,
+                                          fontSize: 15,
+                                          fontWeight: FontWeight.w800,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  Container(
+                                    width: 1,
+                                    height: 24,
+                                    color: AppColors.borderMedium,
+                                  ),
+                                  Column(
+                                    children: [
+                                      const Text(
+                                        'CLAIMED',
+                                        style: TextStyle(
+                                          color: AppColors.secondaryText,
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        '${payload.claimedReports}',
+                                        style: const TextStyle(
+                                          color: AppColors.amberDark,
+                                          fontSize: 15,
+                                          fontWeight: FontWeight.w800,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  Container(
+                                    width: 1,
+                                    height: 24,
+                                    color: AppColors.borderMedium,
+                                  ),
+                                  Column(
+                                    children: [
+                                      const Text(
+                                        'NET AVAILABLE',
+                                        style: TextStyle(
+                                          color: AppColors.secondaryText,
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        '${payload.available}',
+                                        style: const TextStyle(
+                                          color: AppColors.darkGreen,
+                                          fontSize: 15,
+                                          fontWeight: FontWeight.w800,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+
+                            const SizedBox(height: 10),
+
+                            // Location coordinates
+                            Row(
+                              children: [
+                                const Icon(Icons.location_on_outlined, size: 14, color: AppColors.secondaryText),
+                                const SizedBox(width: 4),
+                                Text(
+                                  '${payload.location.lat.toStringAsFixed(4)}, ${payload.location.lon.toStringAsFixed(4)}',
+                                  style: const TextStyle(
+                                    color: AppColors.secondaryText,
+                                    fontSize: 12,
+                                    fontFamily: 'monospace',
+                                  ),
+                                ),
+                                const Spacer(),
+                                Text(
+                                  'Hops left: ${claim.hopLimit}',
+                                  style: const TextStyle(
+                                    color: AppColors.secondaryText,
+                                    fontSize: 11,
+                                  ),
+                                ),
+                              ],
+                            ),
+
+                            const SizedBox(height: 10),
+                            const Divider(height: 1, color: AppColors.borderSubtle),
+                            const SizedBox(height: 8),
+
+                            // Footer: relative time & inspect action hint
+                            Row(
+                              children: [
+                                const Icon(Icons.access_time, size: 13, color: AppColors.secondaryText),
+                                const SizedBox(width: 4),
+                                Text(
+                                  relTime,
+                                  style: const TextStyle(
+                                    color: AppColors.secondaryText,
+                                    fontSize: 11,
+                                    fontStyle: FontStyle.italic,
+                                  ),
+                                ),
+                                const Spacer(),
+                                const Text(
+                                  'Manage supply',
+                                  style: TextStyle(
+                                    color: AppColors.darkGreen,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                const Icon(Icons.chevron_right, size: 16, color: AppColors.darkGreen),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+        ),
       ],
     );
   }
 
-  Widget _buildProxyInfo(SosProxyPayload payload) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
+  // ═══════════════════════════════════════════════════════════════════
+  // SHARED WIDGET HELPERS
+  // ═══════════════════════════════════════════════════════════════════
+  Widget _buildCategoryFilterChip(
+    String label,
+    ResourceCategory? category, {
+    IconData? icon,
+  }) {
+    final isSelected = _selectedResourceCategory == category;
+    return GestureDetector(
+      onTap: () {
+        setState(() {
+          _selectedResourceCategory = category;
+        });
+      },
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+        decoration: BoxDecoration(
+          color: isSelected ? AppColors.darkGreen : AppColors.creamBackground,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: isSelected ? AppColors.darkGreen : AppColors.borderSubtle,
+            width: 1.5,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.person_pin_circle_outlined, size: 16, color: AppColors.darkRed),
-            const SizedBox(width: 4),
+            if (icon != null) ...[
+              Icon(
+                icon,
+                size: 14,
+                color: isSelected ? Colors.white : AppColors.darkGreen,
+              ),
+              const SizedBox(width: 4),
+            ],
             Text(
-              'Proxy SOS — reported for someone else',
+              label,
               style: TextStyle(
-                color: AppColors.darkRed.withAlpha(220),
                 fontSize: 12,
-                fontWeight: FontWeight.w600,
+                fontWeight: isSelected ? FontWeight.w800 : FontWeight.w600,
+                color: isSelected ? Colors.white : AppColors.primaryText,
               ),
             ),
           ],
         ),
-        if (payload.proxyNote != null) ...[
-          const SizedBox(height: 4),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            decoration: BoxDecoration(
-              color: AppColors.creamBackground,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: AppColors.borderSubtle),
-            ),
-            child: Text(
-              '"${payload.proxyNote}"',
-              style: const TextStyle(
-                color: AppColors.primaryText,
-                fontSize: 12,
-                fontStyle: FontStyle.italic,
-              ),
-            ),
-          ),
-        ],
-      ],
-    );
-  }
-
-  Widget _buildHazardInfo(HazardReportPayload payload) {
-    return Row(
-      children: [
-        const Icon(Icons.warning_amber_rounded, size: 16, color: AppColors.amberDark),
-        const SizedBox(width: 4),
-        Text(
-          '${payload.hazardType.name.toUpperCase()} — ${payload.confirmationCount} reports',
-          style: const TextStyle(
-            color: AppColors.primaryText,
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildResourceInfo(ResourcePayload payload) {
-    // Availability is computed, never stored — CLAUDE.md §7, CLAIM_SCHEMA.md §8.1.
-    final available = payload.available;
-    return Row(
-      children: [
-        Icon(
-          _iconForResource(payload.category),
-          size: 16,
-          color: AppColors.darkGreen,
-        ),
-        const SizedBox(width: 4),
-        Text(
-          '${payload.category.name} — $available available (${payload.pledgedCount} pledged, ${payload.claimedReports} claimed)',
-          style: const TextStyle(
-            color: AppColors.primaryText,
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      ],
+      ),
     );
   }
 
   Widget _buildBadge(String label, Color fg, Color bg, Color border) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
       decoration: BoxDecoration(
         color: bg,
         borderRadius: BorderRadius.circular(6),
@@ -369,91 +917,56 @@ class _ClaimCard extends StatelessWidget {
         label,
         style: TextStyle(
           color: fg,
-          fontSize: 10,
-          fontWeight: FontWeight.w700,
-          letterSpacing: 0.3,
+          fontSize: 9,
+          fontWeight: FontWeight.w800,
+          letterSpacing: 0.2,
         ),
       ),
     );
   }
 
-  // ─── Label & Color Helpers ──────────────────────────────────────
-
-  static Color _colorForType(ClaimType type) => switch (type) {
-        ClaimType.sos => AppColors.darkRed,
-        ClaimType.sosProxy => AppColors.darkRed,
-        ClaimType.hazardReport => AppColors.amberDark,
-        ClaimType.resource => AppColors.darkGreen,
-      };
-
-  static IconData _iconForType(ClaimType type) => switch (type) {
-        ClaimType.sos => Icons.sos_rounded,
-        ClaimType.sosProxy => Icons.person_pin_circle,
-        ClaimType.hazardReport => Icons.report_problem_outlined,
-        ClaimType.resource => Icons.inventory_2_outlined,
-      };
-
-  static String _labelForType(ClaimType type) => switch (type) {
-        ClaimType.sos => 'SOS',
-        ClaimType.sosProxy => 'Proxy SOS',
-        ClaimType.hazardReport => 'Hazard Report',
-        ClaimType.resource => 'Resource',
-      };
-
-  static ({String label, Color fg, Color bg, Color border}) _trustConfig(ClaimTrust trust) =>
-      switch (trust) {
-        ClaimTrust.unconfirmed => (
-            label: 'UNCONFIRMED',
-            fg: AppColors.secondaryText,
-            bg: AppColors.grayLight,
-            border: AppColors.borderSubtle,
-          ),
-        ClaimTrust.corroborated => (
-            label: 'CORROBORATED',
-            fg: AppColors.strongBlue,
-            bg: AppColors.blueLight,
-            border: const Color(0xFFBEE3F8),
-          ),
-        ClaimTrust.groundConfirmed => (
-            label: 'GROUND CONFIRMED',
-            fg: AppColors.darkGreen,
-            bg: AppColors.greenLight,
-            border: const Color(0xFFA7F3D0),
-          ),
-      };
-
-  static ({String label, Color fg, Color bg, Color border}) _priorityConfig(DispatchPriority priority) =>
-      switch (priority) {
-        DispatchPriority.low => (
-            label: 'LOW',
-            fg: AppColors.secondaryText,
-            bg: AppColors.grayLight,
-            border: AppColors.borderSubtle,
-          ),
-        DispatchPriority.seenByVolunteer => (
-            label: 'SEEN',
-            fg: AppColors.amberDark,
-            bg: AppColors.amberLight,
-            border: const Color(0xFFFDE68A),
-          ),
-        DispatchPriority.enRoute => (
-            label: 'EN ROUTE',
-            fg: AppColors.strongBlue,
-            bg: AppColors.blueLight,
-            border: const Color(0xFF90CDF4),
-          ),
-      };
-
-  static String _headcountLabel(HeadcountBucket bucket) => switch (bucket) {
-        HeadcountBucket.twoToFive => '2-5 people',
-        HeadcountBucket.sixToFifteen => '6-15 people',
-        HeadcountBucket.fifteenPlus => '15+ people',
-      };
-
-  static IconData _iconForResource(ResourceCategory cat) => switch (cat) {
-        ResourceCategory.foodWater => Icons.restaurant,
-        ResourceCategory.shelter => Icons.home,
-        ResourceCategory.medical => Icons.medical_services,
-        ResourceCategory.equipment => Icons.build,
-      };
+  Widget _buildEmptyState({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+  }) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32.0),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(18),
+              decoration: BoxDecoration(
+                color: AppColors.surfaceWhite,
+                shape: BoxShape.circle,
+                border: Border.all(color: AppColors.borderSubtle, width: 1.5),
+              ),
+              child: Icon(icon, size: 42, color: AppColors.secondaryText.withAlpha(140)),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              title,
+              style: const TextStyle(
+                color: AppColors.primaryText,
+                fontSize: 16,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              subtitle,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: AppColors.secondaryText,
+                fontSize: 13,
+                height: 1.4,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
