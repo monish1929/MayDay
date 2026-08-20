@@ -1,12 +1,12 @@
 # PERSON_A.md — Mesh & Transport
 
 **Owner:** A
-**Branch prefix:** `a/`
+**Branch prefix:** `a/` · pairing branches `ab/`
 **Primary folder:** `lib/mesh/`
 **Reviews my PRs:** B (always, for anything in `mesh/`)
 **I review:** B's `data/` PRs
 
-Read `CLAUDE.md` and `CLAIM_SCHEMA.md` first. This file is my task list and progress log — update the checkboxes as I go, and fill in the log at the bottom.
+Read `CLAUDE.md` and `CLAIM_SCHEMA.md` first. This is my task list and progress log — tick boxes as I go, keep the log at the bottom current.
 
 ---
 
@@ -16,135 +16,276 @@ Getting bytes from one phone to another with no internet, no router, no cell tow
 
 - BLE advertising, scanning, connection, GATT read/write
 - Wi-Fi Direct, **if** Phase 0 shows it's needed
-- The envelope format and the receive pipeline (`CLAIM_SCHEMA.md` §9)
+- The envelope format and receive pipeline (`CLAIM_SCHEMA.md` §9)
 - Signature verification at each hop
 - Hop-limit decrement and the message de-dup cache
 - Routing policy — full flood vs selective relay
-- Volunteer beaconing (later phase)
+- Volunteer beaconing and time-gossip transport
+- Duty-cycled scanning and the battery budget
 
-**What I don't own:** what a Claim *means*. I move opaque signed bytes. Trust logic, decay, merging — all B's. If I find myself writing an `if (claimType == ...)` outside of routing policy, I've drifted into B's territory and should stop and talk to them.
+**What I don't own:** what a Claim *means*. I move opaque signed bytes. Trust logic, decay, merging, claim IDs are all B's. If I find myself writing `if (claimType == ...)` outside of routing policy, I've drifted into B's territory — stop and talk to them.
 
 ---
 
 ## 2. Why I go first
 
-The whole project rests on one unproven assumption: **phones can find each other and pass messages over BLE reliably enough to matter.** That's not a software design question — it's a "does the hardware and OS cooperate" question, and no amount of good architecture fixes bad radio range.
+The whole project rests on one unproven assumption: **phones can find each other and pass messages over BLE reliably enough to matter.** That's not a software design question — it's "does the hardware and OS cooperate," and no architecture fixes bad radio range.
 
-If BLE mesh turns out to be painful on our test devices, everyone needs to know in week 1, not week 4 after a trust engine and a map have been built on top of it. My Phase 0 output is the input to everyone else's risk assessment.
+If BLE mesh is painful on our devices, everyone needs to know in week 1, not week 4 after a trust engine and a map have been built on top of it. My Phase 0 output is the input to everyone else's risk assessment.
 
 ---
 
-## 3. Week 1 — Phase 0: BLE mesh spike
+# WEEK 1 — PHASE 0: BLE MESH SPIKE
 
-**This is throwaway code.** A separate Flutter project, not the real app. The deliverable is *knowledge*, not code I'll keep. Resist making it nice.
+**Throwaway code.** A separate scratch project, not the real app. The deliverable is *knowledge*. Resist making it nice.
 
 ### Day 1–2 — Two phones talking
-
-- [ ] New scratch Flutter project, `flutter_blue_plus` (or `flutter_reactive_ble` — pick one, note why)
-- [ ] Android BLE permissions sorted (`BLUETOOTH_SCAN`, `BLUETOOTH_ADVERTISE`, `BLUETOOTH_CONNECT`, location permission on older API levels)
+- [ ] Scratch Flutter project; `flutter_blue_plus` or `flutter_reactive_ble` (pick one, note why)
+- [ ] Android BLE permissions (`BLUETOOTH_SCAN`, `BLUETOOTH_ADVERTISE`, `BLUETOOTH_CONNECT`, location on older APIs)
 - [ ] Phone 1 advertises a custom service UUID
 - [ ] Phone 2 scans and discovers it
 - [ ] Connect, write a hardcoded string over a GATT characteristic
-- [ ] Phone 2 displays the received string on screen
-- [ ] **Both directions** — each phone can be sender and receiver
+- [ ] Phone 2 displays it on receipt
+- [ ] **Both directions** — each phone can send and receive
 
-**Gotcha to expect:** Android 12+ permission model for BLE is genuinely fiddly and the plugin docs lag behind. Budget time for this; it is not a sign anything is wrong.
+**Expect trouble here:** the Android 12+ BLE permission model is genuinely fiddly and plugin docs lag behind. Budget time; it isn't a sign anything's wrong.
 
 ### Day 3 — Three phones, the actual mesh question
+- [ ] Phones A and C deliberately **out of range** of each other (verify they can't see each other directly first)
+- [ ] Phone B in between, in range of both
+- [ ] Message from A arrives at C via B
+- [ ] Move B out of the picture — confirm delivery **stops**. This proves genuine relay.
 
-- [ ] Phone A and Phone C placed deliberately **out of range** of each other (different rooms/floors — verify they can't see each other directly first)
-- [ ] Phone B positioned between them, in range of both
-- [ ] Message from A arrives at C, via B
-- [ ] Confirm B genuinely relayed it rather than A reaching C directly — move B out of the picture and confirm delivery *stops*
-
-**This is the single most important test of the week.** If multi-hop doesn't work, the architecture needs rethinking and everyone needs to know immediately.
+**Single most important test of the week.** If multi-hop doesn't work, the architecture needs rethinking and everyone must know immediately.
 
 ### Day 4 — Measurements
+Rough is fine; absent is not.
+- [ ] Range indoors through walls (m)
+- [ ] Range outdoors line of sight (m)
+- [ ] Discovery time — best and worst of ~10 tries
+- [ ] Battery: 1hr continuous scanning (%, note device model)
+- [ ] Battery: 1hr duty-cycled 10s on / 50s off — what we'll actually ship
+- [ ] Max payload that reliably writes in one go
 
-Real numbers, written down. Rough is fine; absent is not.
-
-- [ ] Effective range indoors (through walls) — metres
-- [ ] Effective range outdoors, line of sight — metres
-- [ ] Time from advertising start to discovery — seconds, best and worst of ~10 tries
-- [ ] Battery drain: 1 hour of continuous scanning, % consumed, note the device model
-- [ ] Same over 1 hour of **duty-cycled** scanning (10s on / 50s off) — this is what we'll actually ship
-- [ ] Max payload size that reliably writes in one go
-
-### Day 5 — Write it up + the size question
-
-- [ ] One-page findings doc: `docs/PHASE0_MESH_FINDINGS.md`
+### Day 5 — Write-up and the size question
+- [ ] `docs/PHASE0_MESH_FINDINGS.md`, one page
 - [ ] Recommendation: **is Wi-Fi Direct needed for MVP, or is BLE alone enough?**
-- [ ] **Take the max payload number to B before the week 1 sync.** `CLAIM_SCHEMA.md` §9.2 assumes ≤400 bytes fits in one write. If my measured number is lower, the schema has to change, and that's a three-person conversation.
+- [ ] **Take the max payload number to B before the sync.** The schema assumes ≤400 bytes fits in one write. If mine is lower, the schema changes — three-person conversation.
 
-### Exit criteria
+**Exit criteria:** I can answer with evidence — does multi-hop work, what's the real range and discovery time, what does scanning cost, how many bytes fit.
 
-I can answer, with evidence:
-1. Does multi-hop relay work on our hardware?
-2. What's the realistic range and discovery time?
-3. What does continuous vs duty-cycled scanning cost in battery?
-4. How many bytes fit in one message?
+**Sync question that's mine to raise:** does measured payload capacity match what B's claims need to serialize? If not, we shrink the schema or build fragmentation. Fragmentation is a real feature with real failure modes (partial delivery, reassembly timeouts), not something to slip in quietly.
 
 ---
 
-## 4. The week 1 sync — what I bring
+# WEEK 2 — PHASE 2: TRANSPORT ↔ DATA (paired with B)
 
-One question, and it's mine to raise: **does my measured payload capacity match what B's claims need to serialize?**
+Branch prefix `ab/`. C works in parallel swapping mocks for B's store — they don't need us.
 
-`CLAIM_SCHEMA.md` §9.2 targets ≤400 bytes per envelope. If BLE gives me less in practice, we either shrink the schema or build fragmentation — and fragmentation is a real feature with real failure modes (partial delivery, reassembly timeouts), not something to slip in quietly.
+**Why pair rather than split:** this seam is where the subtle bugs live. I can't see B's assumptions about the schema; B can't see mine about the wire. Three days at one keyboard beats debugging corrupted trust state later.
 
-I also bring the battery numbers, because they feed directly into the 72-hour target in `CLAUDE.md` §9 and into whether fixed relay points move from "open question" to "needed."
+### Day 1 — Envelope and serialization
+- [ ] `Envelope` class exactly per `CLAIM_SCHEMA.md` §9.1
+- [ ] CBOR encode/decode round-trip against B's `Claim` model
+- [ ] `msgId` generated fresh per **transmission**, not per claim — a claim is re-sent many times
+- [ ] Measure real encoded size per claim type against the 400-byte budget
+- [ ] With B: if any type is over budget, shrink fields or plan fragmentation. **Don't decide alone.**
 
----
+### Day 2 — Signature verification at the hop
+- [ ] Ed25519 verify on receipt using the originator's public key
+- [ ] Confirm signature covers `(v || kind || body)` and **excludes `hopLimit` and `msgId`** — they change per hop, so signing them breaks verification after the first forward
+- [ ] Tampered body → rejected
+- [ ] Missing signature → rejected
+- [ ] Malformed CBOR → rejected without crashing
+- [ ] Rejected messages are **not relayed and not stored**
 
-## 5. Week 2 — Phase 2, pairing with B
+### Day 3 — Receive pipeline in the correct order
+Order is not arbitrary (`CLAIM_SCHEMA.md` §9.3):
+- [ ] 1. De-dup — `msgId` in seen cache → drop silently, don't relay
+- [ ] 2. Verify — invalid → drop, don't relay, **don't store**
+- [ ] 3. Decrement `hopLimit` — at zero, store locally but don't relay
+- [ ] 4. Store via B's layer, then relay per routing policy
+- [ ] `seen_messages` cache with eviction — it can't grow forever
+- [ ] Same message twice → stored once, relayed once
 
-I stop working solo here. A+B pair on wiring transport to the data layer, on branch prefix `ab/`.
+Verification lands **before** storage so a malformed claim can't enter the store, and **before** relay so an honest device can't propagate a tampered one.
 
-- [ ] Serialize a Claim (B's code) → CBOR → BLE write
-- [ ] Receive → deserialize → **verify signature** → hand to B's store
-- [ ] Receive pipeline in the right order (`CLAIM_SCHEMA.md` §9.3): de-dup → verify → decrement → store → relay
-- [ ] Message-ID de-dup cache working — same message received twice is not stored twice
-- [ ] `hopLimit` decrements; at zero, store but don't relay
-- [ ] Malformed / unsigned / tampered claims dropped and **not relayed**
-- [ ] Corroboration from a genuinely second physical device upgrades trust tier correctly
+### Day 4 — Two-phone end-to-end, then three-way integration
+- [ ] Claim created on phone 1 arrives in phone 2's store, intact and verified
+- [ ] Corroboration from a genuinely second physical device upgrades trust correctly
+- [ ] **Relaying between two phones does NOT move trust** — verify on real hardware, not just B's harness
+- [ ] Join C: a claim raised on phone 1 renders on phone 2's map
+- [ ] Two SOS in the same geohash bucket → **two pins**, not one
 
-**Why pair rather than split:** this seam is where the subtle bugs live. I can't see B's assumptions about the schema and B can't see mine about the wire. Two people at one keyboard for a few days is cheaper than debugging a corrupted trust state later.
+### Day 5 — Routing policy v1
+- [ ] Full flood for `sos`, `sosProxy`, `hazardReport` — every device relays
+- [ ] Selective relay for `resource` — a stale resource pin is an inconvenience, not a life risk
+- [ ] `hopLimit` defaults per type, using Phase 0 range data
+- [ ] Relay queue with volunteer-first send ordering when several neighbours are available
+- [ ] Basic backpressure — what happens when the send queue outpaces the radio
 
-C works in parallel this week swapping their mocks for B's real store — C doesn't need either of us for most of that.
-
----
-
-## 6. Later phases
-
-**Phase 3** — I take one of the three flows. Likely **Rescue**, since I'll have the deepest grip on how SOS propagates after Phase 2, and Rescue is where the never-merge and never-decay rules matter most.
-
-**Phase 4+** — routing policy refinement:
-- [ ] Full flood for `sos`/`sosProxy`/`hazardReport`; selective relay for `resource`
-- [ ] **Volunteer beaconing** — volunteer nodes broadcast a signed "volunteer here" beacon with a hop count, so devices learn "a volunteer is ~3 hops away via this neighbour"
-- [ ] Volunteer-first send ordering when airtime is limited
-- [ ] Duty-cycled scanning tuned against the 72-hour target
-
-**Do not implement "directional relay toward volunteers."** BLE has no directional information, and in a full flood there's nothing left to prefer. The two mechanisms above are the working replacement — see `CLAUDE.md` §1.2.
-
----
-
-## 7. Invariants I'm personally responsible for
-
-These are mine to get right. Others may not catch them in review.
-
-- **Claims are signed, never encrypted** (`CLAUDE.md` §2.5). Every relay must read content to corroborate and render pins. If I ever feel tempted to encrypt a payload, the answer is no — see the reasoning before arguing for it.
-- **Verify before store, verify before relay** (§9.3). Order matters: a malformed claim must never enter the store, and a tampered one must never be propagated by an honest device.
-- **The signature excludes `hopLimit` and `msgId`.** They change per hop. Signing them breaks verification after the first forward.
-- **`hopLimit` is not TTL.** It's a hop count, unrelated to `displayLifetime`. Never share a variable, config key, or name between them.
-- **No server, endpoint, or sync path.** If I find myself writing a retry-until-connected loop, something's wrong — there's nothing to connect to.
+**Exit criteria:** two real phones exchanging signed claims, trust moving only for the right reasons, C's UI rendering claims that originated elsewhere.
 
 ---
 
-## 8. My PR checklist
+# WEEK 3 — PHASE 3: RESCUE FLOW
+
+I take Rescue — deepest grip on SOS propagation after Phase 2, and it's where never-merge and never-decay matter most. B takes Report, C takes Contribute. Back to `a/` branches.
+
+### Day 1 — SOS creation and the three sub-types
+- [ ] Individual SOS end to end: create → sign → flood → appears on other devices
+- [ ] Group SOS carrying a `HeadcountBucket`
+- [ ] **Proxy SOS** — for someone whose phone is dead; carries `reporterDeviceId` and a reporter-marked location
+- [ ] Verify with B that each generates a **unique** ID via `sosClaimId()`, never the merge hash
+- [ ] Two SOS raised in the same bucket seconds apart → two distinct claims on every device
+
+### Day 2 — Flood behaviour under stress
+- [ ] Three-phone flood: SOS from one edge reaches the far edge
+- [ ] Measure end-to-end latency across 2 and 3 hops
+- [ ] Rapid repeat SOS from one device → de-dup holds, no broadcast storm
+- [ ] A device joining the mesh *after* an SOS was raised still receives it (late-join delivery)
+- [ ] SOS survives a relay node dropping out mid-propagation
+
+**Late-join matters more than it sounds:** a volunteer arriving an hour later must still see the active SOS. This is the practical reason SOS never decays.
+
+### Day 3 — QR resolution, transport side
+- [ ] `kind: 2` resolution envelope defined and propagating
+- [ ] Carries `sosId`, `nonce`, requester signature, volunteer counter-signature
+- [ ] Verify **both** signatures at the hop before applying
+- [ ] Resolution floods back through the mesh like the original SOS
+- [ ] A resolution for an **unknown** `sosId` is stored and applied when the claim later arrives
+
+That last one is easy to miss: a resolution can outrun the original SOS to a distant device. Dropping it leaves the claim active forever on that phone.
+
+### Day 4 — Replay and adversarial resolution
+- [ ] Replayed QR payload with a stale nonce → **rejected**
+- [ ] Resolution signed by a non-volunteer key → rejected
+- [ ] Tampered `sosId` → signature check fails
+- [ ] Manual resolution propagates but is tagged lower confidence
+- [ ] Confirm with B: manual resolve **archives** rather than clears
+
+### Day 5 — Volunteer dispatch signalling
+- [ ] `dispatchPriority` transitions propagate: `seenByVolunteer`, `enRoute`
+- [ ] Confirm these move **priority only, never trust** — a volunteer seeing a claim knows no more than any other device
+- [ ] A claim can be `enRoute` while still `unconfirmed` — verify that state is reachable and renders for C
+- [ ] Two volunteers both marking `enRoute` → last-write-wins by logical clock, both recorded
+
+**Exit criteria:** an SOS can be raised, flood three hops, be marked en route by a volunteer, resolved by signed QR, and cleared everywhere — with replay attempts rejected.
+
+---
+
+# WEEK 4 — PHASE 4: IDENTITY, ROUTING, BEACONING
+
+Phase 4 splits three ways across one feature. **My share: vouch and revocation as message kinds, plus volunteer beaconing.** B does keypairs and secure storage; C does the volunteer UI.
+
+### Day 1 — Vouch messages
+- [ ] `kind: 3` vouch envelope — voucher public key, vouchee public key, voucher signature
+- [ ] Vouch propagates and is independently verifiable by any device, no server
+- [ ] Vouch cap (5 per verified volunteer) carried **inside the signed vouch** so any device can check it
+- [ ] A vouch signed by a `vouchedProvisional` node → **rejected.** Provisional nodes cannot vouch — this stops unbounded trust minting from one compromise.
+
+### Day 2 — Revocation
+- [ ] `kind: 4` revocation envelope
+- [ ] Propagates like any other claim and overrides the vouch
+- [ ] Most recent valid revocation wins, ordered by logical clock
+- [ ] Revocation signed by someone other than the original voucher → rejected
+- [ ] A revoked node's later messages stop being volunteer-weighted
+
+### Day 3 — Volunteer beaconing
+This replaces "directional relay," which cannot work — **BLE has no directional information, and in a full flood there's nothing left to prefer.**
+- [ ] `kind: 5` beacon — signed "volunteer here" with a hop count
+- [ ] Volunteer nodes broadcast periodically; interval tuned against battery
+- [ ] Receiving devices build a gradient: "a volunteer is ~3 hops away via this neighbour"
+- [ ] Gradient entries expire — volunteers move, and a stale gradient is worse than none
+- [ ] Send ordering uses the gradient: volunteer-ward neighbours first
+- [ ] Beacons rate-limited so they don't crowd out real traffic
+
+### Day 4 — Time gossip transport
+- [ ] `kind: 6` — devices exchange clock readings on meeting
+- [ ] Hand readings to B's layer, which computes the median (volunteers weighted higher)
+- [ ] Gossip **piggybacks on existing connections** rather than opening new ones — a battery decision, not a nicety
+- [ ] Measure real clock drift between our test devices over 24h; note it (feeds an open question)
+
+### Day 5 — Duty cycling and the battery budget
+- [ ] Duty-cycled scanning (start 10s on / 50s off, tune from there)
+- [ ] Low-power mode: drop `resource` traffic, keep SOS relay alive
+- [ ] Measure against the **72-hour target** (mid-range phone, 50% start charge)
+- [ ] Confirm SOS relay latency is still acceptable at the chosen duty cycle — **this is the real trade-off**
+- [ ] Record actual numbers in `PHASE0_MESH_FINDINGS.md`
+
+**Exit criteria:** volunteers can be vouched in and revoked fully offline; the mesh routes toward volunteers via beacon gradient; duty cycling has real numbers against the 72-hour target.
+
+---
+
+# WEEK 5 — HARDENING & FIELD TESTING
+
+### Day 1 — Multi-device scale test
+- [ ] Borrow as many phones as possible (target 6–8) into one mesh
+- [ ] **Does flood routing cause broadcast storms at density?** (a listed open question — this is the week to answer it)
+- [ ] Measure delivery rate and latency as device count rises
+- [ ] Tune de-dup cache size and relay backoff against what you observe
+
+### Day 2 — Partition and rejoin
+- [ ] Physically split the mesh into two groups; raise claims in each
+- [ ] Rejoin — do both sides converge?
+- [ ] A resolution raised during partition applies correctly after rejoin
+- [ ] With B: resource counters converge sanely and never go negative
+
+### Day 3 — Failure modes
+- [ ] Bluetooth toggled off mid-relay → graceful recovery, no crash
+- [ ] App backgrounded → does relay survive? **Android background BLE limits are real — document what actually happens rather than what should**
+- [ ] Phone reboots → mesh rejoins without user action
+- [ ] Storage full → with B, confirm active SOS is never what gets evicted
+- [ ] Very low battery → low-power mode engages, SOS still relays
+
+### Day 4 — Outdoor field test
+- [ ] Real distances outdoors, not corridors — walk the range out until delivery fails
+- [ ] Multi-hop across a genuine physical gap (across a field, between buildings)
+- [ ] Volunteer gradient behaviour when a volunteer physically moves
+- [ ] Update range and `hopLimit` numbers with real-world figures
+
+### Day 5 — Documentation and handoff
+- [ ] Finalise `PHASE0_MESH_FINDINGS.md` with all measured numbers
+- [ ] Write down every Android-specific gotcha hit along the way — **this is the knowledge that evaporates**
+- [ ] Close or re-scope my open questions below
+- [ ] Answer for the team: **do we need fixed relay points?** My battery and range data is the deciding evidence
+
+**Exit criteria:** the mesh has been tested at realistic device counts, outdoors, across partitions and failures, with documented numbers rather than assumptions.
+
+---
+
+# BEYOND WEEK 5 — BACKLOG
+
+Not scheduled. Pull from here when the above is solid.
+
+- [ ] Wi-Fi Direct for higher-bandwidth transfers, **if** Phase 0 said we need it
+- [ ] Single-tile map transfer over mesh — narrow fallback only: explicit request, Wi-Fi Direct only, above a battery threshold, **never on a volunteer node during active response**
+- [ ] Fixed relay point mode (generator-powered node at a relief camp), if the team says yes
+- [ ] Adaptive duty cycling — scan harder when claims are active nearby, back off when quiet
+- [ ] Message fragmentation, **only** if a payload genuinely can't be shrunk under budget
+- [ ] Protocol version negotiation for mixed-version devices in one mesh
+
+---
+
+## Invariants I'm personally responsible for
+
+Others may not catch these in review.
+
+- **Claims are signed, never encrypted** (`CLAUDE.md` §2.5). Every relay must read content to corroborate and render pins. If I'm tempted to encrypt a payload, the answer is no — read the reasoning before arguing for it.
+- **Verify before store, verify before relay.** A malformed claim must never enter the store; a tampered one must never be propagated by an honest device.
+- **The signature excludes `hopLimit` and `msgId`.** They change per hop; signing them breaks verification after the first forward.
+- **`hopLimit` is not TTL.** A hop count, unrelated to `displayLifetime`. Never share a variable, config key, or name between them.
+- **Relaying never touches trust.** My layer hands claims to B's; it never sets `claimTrust` itself.
+- **No server, endpoint, or sync path.** A retry-until-connected loop means something's wrong — there's nothing to connect to.
+- **No directional relay.** BLE has no direction. Beacon gradient plus send ordering is the working replacement.
+
+---
+
+## My PR checklist
 
 Beyond the standard checks in `CLAUDE.md` §4.5:
 
-- [ ] Tested on **at least two physical devices**. Emulator does not count for mesh code, ever.
+- [ ] Tested on **at least two physical devices.** Emulator never counts for mesh code.
 - [ ] Signature verified at hop; unsigned/malformed dropped and not relayed
 - [ ] `hopLimit` decrements; de-dup cache prevents re-broadcast
 - [ ] Battery impact noted in the PR description if scan behaviour changed
@@ -153,32 +294,38 @@ Beyond the standard checks in `CLAUDE.md` §4.5:
 
 ---
 
-## 9. Progress log
+## Progress log
 
-Update after each work session. Keep it short — this is for the team sync, not a diary.
-
-| Date | Branch | What landed | Blocked on / notes |
-|---|---|---|---|
-| | | | |
-| | | | |
-| | | | |
+| Date | Week/Day | Branch | What landed | Blocked on / notes |
+|---|---|---|---|---|
+| | | | | |
+| | | | | |
+| | | | | |
 
 ### Open questions I'm carrying
 
-- [ ] `hopLimit` default per message type — **TBD pending my Phase 0 range data.** Don't let anyone pick a number before that lands.
-- [ ] Is Wi-Fi Direct needed for MVP at all? — Phase 0 answers this
-- [ ] Does flood routing cause broadcast storms at relief-camp density (hundreds of phones)? — needs a later, bigger test than I can run in week 1
-- [ ] `flutter_blue_plus` vs `flutter_reactive_ble` — decide day 1, note the reason here:
+- [ ] `hopLimit` default per message type — **TBD pending Phase 0 range data.** Don't let anyone pick a number before that lands.
+- [ ] Is Wi-Fi Direct needed for MVP at all? — Phase 0, Wk1 D5
+- [ ] Broadcast storms at relief-camp density? — Wk5 D1
+- [ ] Real clock-drift rate over 72h+ — first number Wk4 D4
+- [ ] Do we need fixed relay points? — Wk5 D5, my data decides
+- [ ] Android background BLE limits — how much relay survives backgrounding? Wk5 D3
+- [ ] `flutter_blue_plus` vs `flutter_reactive_ble` — decide Wk1 D1, note reason:
 
-### Phase 0 findings (fill in day 5)
+### Measurements (fill Wk1 D4–5, revise Wk5)
 
-| Measurement | Result | Device / conditions |
-|---|---|---|
-| Range, indoors through walls | | |
-| Range, outdoors line of sight | | |
-| Discovery time (best / worst of 10) | | |
-| Battery, 1hr continuous scan | | |
-| Battery, 1hr duty-cycled 10s/50s | | |
-| Max single-write payload | | |
-| **Multi-hop relay works?** | | |
-| **Wi-Fi Direct needed for MVP?** | | |
+| Measurement | Wk1 | Wk5 revised | Device / conditions |
+|---|---|---|---|
+| Range, indoors through walls | | | |
+| Range, outdoors line of sight | | | |
+| Discovery time (best / worst of 10) | | | |
+| Battery, 1hr continuous scan | | | |
+| Battery, 1hr duty-cycled 10s/50s | | | |
+| Max single-write payload | | | |
+| Delivery latency, 2 hops | | | |
+| Delivery latency, 3 hops | | | |
+| Max devices tested in one mesh | | | |
+| Clock drift over 24h | | | |
+| **Multi-hop relay works?** | | | |
+| **Wi-Fi Direct needed for MVP?** | | | |
+| **72-hour target achievable?** | | | |
