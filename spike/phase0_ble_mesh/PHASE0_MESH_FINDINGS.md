@@ -43,7 +43,7 @@ fragmentation feature.
 
 | Measurement | Result | Device / conditions |
 |---|---|---|
-| Range, indoors through walls | **Never found a hard write-range boundary, over <10m total distance.** RSSI -45 to -79 side-by-side with the stationary phone (asymmetric — see §11), -39/-41 a short distance away, -83/-84 through one wall+bathroom, -89 to -94 at the far corner (full width of home + a wall) — see §11. Since all 4 points fit inside 10m, the ~50 dB drop is almost entirely wall/obstruction loss, not distance — says more about this home's wall construction than about BLE's raw range. Writes (including 512B probes) mostly still succeeded even at -91 to -94; some `TIMED OUT` failures scattered across the range, not cleanly correlated with weak RSSI alone (one occurred at -41, strong signal) | 2 phones, labels A/B — physical models TBD, confirm which. TX-power-HIGH + write-timeout build. Closed doors throughout, one leg separated by a wall + bathroom |
+| Range, indoors through walls | **Never found a hard write-range boundary, over just ~4-6m total distance.** RSSI -45 to -79 side-by-side with the stationary phone (asymmetric — see §11), -39/-41 a short distance away, -83/-84 through one wall+bathroom, -89 to -94 at the far corner (full width of home + a wall) — see §11. Free-space loss over 4-6m is only ~15-16 dB, so the ~50 dB drop observed is 30+ dB of wall/obstruction attenuation, not distance — says more about this home's wall construction than about BLE's raw range. Writes (including 512B probes) mostly still succeeded even at -91 to -94; some `TIMED OUT` failures scattered across the range, not cleanly correlated with weak RSSI alone (one occurred at -41, strong signal) | 2 phones, labels A/B — physical models TBD, confirm which. TX-power-HIGH + write-timeout build. Closed doors throughout, one leg separated by a wall + bathroom |
 | Range, outdoors line of sight | Discovery still working (intermittently) at ~40m; writes already failing (status 133) at that distance — see §10. **Not an official measurement**, informal check | Redmi + OPPO, open pathway, no walls, light foot traffic. Medium TX power (pre-§9 patch) |
 | Discovery time, best of 10 | 245ms (1 sample, not yet a real best-of-10) | B scanning for A, A already advertising. Same room, both M2101K7BI |
 | Discovery time, worst of 10 | | |
@@ -484,16 +484,20 @@ useful result, not an incomplete test — it means this home's indoor
 footprint, even through a wall+bathroom and a full diagonal, stays inside
 usable BLE range on the current build.
 
-**Total physical distance covered: under 10m.** All four points fit inside
-that. Read correctly, this means the ~50 dB of signal loss observed (-39 at
-P1 down to -94 at P3) is almost entirely **wall/obstruction attenuation,
-not distance attenuation** — this run says little about BLE's raw open-air
-range (§10's outdoor test is the one that speaks to that) and a lot about
-how lossy this home's construction is (plausibly concrete/brick given the
-loss per wall, not just drywall). Framed that way, the result is stronger
-than it first reads: writes stayed mostly reliable at -94 through two solid
-obstructions inside under 10m — a good sign for a typical rural home's
-interior coverage, not a middling one.
+**Total physical distance covered: ~4-6m.** All four points fit inside
+that span. Free-space path loss for 2.4GHz BLE over that distance is only
+~15-16 dB (roughly `20*log10(6/1) ≈ 15.6 dB` going from ~1m to ~6m) — physics
+alone barely moves the needle at this scale. The logs show roughly a **50 dB**
+total drop (-39/-45 near down to -94 far), meaning **30+ dB — the large
+majority of the loss — is wall/obstruction attenuation, not distance.** This
+run says little about BLE's raw open-air range (§10's outdoor test is the
+one that speaks to that) and a lot about how lossy this home's construction
+is (plausibly concrete/brick given the loss per wall, not just drywall).
+Framed that way, the result is stronger than it first reads: writes stayed
+mostly reliable at -94 through two solid obstructions inside just a few
+metres — a good sign for a typical rural home's interior coverage (the
+"family sharing one phone in one house" scenario `MAYDAY_PROJECT_CONTEXT.md`
+§10 is built around), not a middling one.
 
 ### Honest caveat: write failures don't track RSSI cleanly
 
