@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:mayday/ui/screens/entry_screen.dart';
 import 'package:mayday/ui/screens/main_screen.dart';
+import 'package:mayday/ui/screens/qr_scanner_screen.dart';
 import 'package:mayday/ui/screens/volunteer_ops_screen.dart';
 
 /// App route definitions — PERSON_C.md §3 Day 1.
@@ -9,10 +10,12 @@ import 'package:mayday/ui/screens/volunteer_ops_screen.dart';
 ///   /          → EntryScreen (User / Volunteer choice)
 ///   /main      → MainScreen (map + bottom sheet + layer toggle)
 ///   /volunteer-ops → VolunteerOpsScreen (rescue queue, reports, resources)
+///   /qr-scanner → QRScannerScreen (viewfinder & permission handling)
 class AppRouter {
   static const String entry = '/';
   static const String main = MainScreen.routeName;
   static const String volunteerOps = VolunteerOpsScreen.routeName;
+  static const String qrScanner = QRScannerScreen.routeName;
 
   static Route<dynamic> generateRoute(RouteSettings settings) {
     switch (settings.name) {
@@ -32,6 +35,12 @@ class AppRouter {
       case volunteerOps:
         return MaterialPageRoute(
           builder: (_) => const VolunteerOpsScreen(),
+          settings: settings,
+        );
+
+      case qrScanner:
+        return MaterialPageRoute(
+          builder: (_) => const QRScannerScreen(),
           settings: settings,
         );
 

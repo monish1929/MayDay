@@ -10,6 +10,7 @@ dependencies:
   flutter:
     sdk: flutter
   maplibre_gl: ^0.26.2
+  mobile_scanner: ^7.4.0
   path_provider: ^2.1.0
   sqlite3: ^2.4.1
   sqlite3_flutter_libs: ^0.5.24
