@@ -9,7 +9,14 @@ sealed class ClaimPayload {
   const ClaimPayload();
 
   CborValue toCbor();
-  
+
+  /// Every claim type is location-tagged, so this is declared on the base
+  /// rather than rediscovered by `is` checks at each call site. Adding a
+  /// fifth payload type is then a compile error here, instead of silently
+  /// falling through to a (0, 0) default somewhere downstream.
+  GeoPoint get location;
+
+
   static ClaimPayload fromCbor(ClaimType type, CborMap map) {
     switch (type) {
       case ClaimType.sos:
@@ -54,6 +61,7 @@ const _kProxyNote = CborSmallInt(9);
 const _kNote = CborSmallInt(10);
 
 class SosPayload extends ClaimPayload {
+  @override
   final GeoPoint location;
   final HeadcountBucket? headcount;
 
@@ -88,6 +96,7 @@ class SosPayload extends ClaimPayload {
 }
 
 class SosProxyPayload extends ClaimPayload {
+  @override
   final GeoPoint location;
   final HeadcountBucket? headcount;
   final String reporterDeviceId;
@@ -136,6 +145,7 @@ class SosProxyPayload extends ClaimPayload {
 }
 
 class HazardReportPayload extends ClaimPayload {
+  @override
   final GeoPoint location;
   final HazardType hazardType;
   final int confirmationCount;
@@ -182,6 +192,7 @@ class HazardReportPayload extends ClaimPayload {
 }
 
 class ResourcePayload extends ClaimPayload {
+  @override
   final GeoPoint location;
   final ResourceCategory category;
   final int pledgedCount;
