@@ -4,8 +4,8 @@
 
 This is the *data contract* — the exact shape of a Claim, the two identity rules, and the state machines that govern it. `CLAUDE.md` explains why these rules exist; this file is the reference for what to actually implement.
 
-Last changed by: — (fill in on every edit)
-Last changed on: — (fill in on every edit)
+Last changed by: A
+Last changed on: 2026-08-21 — fixed §1/§10 typing `createdAtLogical`/`lastConfirmedAtLogical`/`archivedAtLogical`/`resolvedAtLogical` as `DateTime` when §4 already required `LogicalClock` (B and C both aware; C's implementation already used the correct type, B's followed the doc's stale type)
 
 ---
 
@@ -26,14 +26,14 @@ class Claim {
   ClaimStatus status;               // active | resolved | archived — see §6
   ResolutionMethod? resolutionMethod; // qr | manual | autoExpired | null
   String? resolvedByVolunteerId;
-  DateTime? resolvedAtLogical;      // logical time, not wall clock — see §4
+  LogicalClock? resolvedAtLogical;   // logical time, not wall clock — see §4
 
   int hopLimit;                     // decrements per relay hop — see §7
   Duration displayLifetime;         // how long it stays on the map — see §7
 
-  DateTime? createdAtLogical;
-  DateTime? lastConfirmedAtLogical;
-  DateTime? archivedAtLogical;
+  LogicalClock? createdAtLogical;
+  LogicalClock? lastConfirmedAtLogical;
+  LogicalClock? archivedAtLogical;
 
   // Type-specific payload — see §8
   ClaimPayload payload;
@@ -133,13 +133,13 @@ class LogicalClock {
 - Ordering between two events from different devices: compare logical clocks. This answers "which happened more recently, relative to each other" — which is all the merge/decay logic actually needs.
 - **Mesh time gossip** (separate mechanism, for the *display* layer only): when devices meet, they exchange clock readings and maintain a running estimate of mesh-median time, weighting volunteer nodes' clocks higher.
 - UI shows **relative time only** — "about 2 hours ago." Never render a precise timestamp; it would be fabricated precision.
-- `createdAtLogical`, `lastConfirmedAtLogical`, `resolvedAtLogical`, `archivedAtLogical` are all logical-clock values, not `DateTime.now()`. Naming keeps this explicit — don't rename these to drop `Logical`.
+- `createdAtLogical`, `lastConfirmedAtLogical`, `resolvedAtLogical`, `archivedAtLogical` are all `LogicalClock` values (§1), not `DateTime.now()`. Naming keeps this explicit — don't rename these to drop `Logical`. **§1's Dart snippet previously typed these as `DateTime` — that was a drafting error, fixed 2026-08-21. This prose was always the correct rule.**
 
 ---
 
 ## 5. Signing
 
-Every claim carries `originSignature`: an Ed25519 signature by the originating device's key, over the full claim payload (excluding the signature field itself and any mutable fields like `corroborations`, `claimTrust`, `dispatchPriority` — sign the immutable core: `id`, `type`, `originDeviceId`, `logicalClock`, `payload`, `createdAtLogical`).
+Every claim carries `originSignature`: an Ed25519 signature by the originating device's key, over the full claim payload (excluding the signature field itself and any mutable fields like `corroborations`, `claimTrust`, `dispatchPriority` — sign the immutable core: `id`, `type`, `originDeviceId`, `logicalClock`, `payload`, `createdAtLogical`). `createdAtLogical` is a `LogicalClock` (§1, §4) — encode both its `deviceId` and `counter` in the signed bytes, not a single scalar.
 
 **Claims are signed, never encrypted.** Every relay must be able to read content to draw the pin, compute the geohash bucket, and corroborate. Signature ≠ encryption: it proves who sent it and that it's untampered, while leaving it fully readable.
 
@@ -327,10 +327,16 @@ CREATE TABLE claims (
   payload             BLOB    NOT NULL,   -- CBOR, per §8
   resolution_method   INTEGER,            -- NULL while ACTIVE
   resolved_by         TEXT,
+  resolved_at_logical_device_id TEXT,     -- LogicalClock, NULL until resolved — see §4
+  resolved_at_logical_counter   INTEGER,
   hop_limit           INTEGER NOT NULL,
   display_lifetime_ms INTEGER,            -- NULL for sos / sosProxy — see below
-  created_at_logical  INTEGER NOT NULL,
-  archived_at_logical INTEGER
+  created_at_logical_device_id  TEXT    NOT NULL,  -- LogicalClock, mandatory: every claim has a creation event — see §4
+  created_at_logical_counter    INTEGER NOT NULL,
+  last_confirmed_at_logical_device_id TEXT,        -- LogicalClock, NULL until first re-confirmation
+  last_confirmed_at_logical_counter   INTEGER,
+  archived_at_logical_device_id TEXT,     -- LogicalClock, NULL until archived
+  archived_at_logical_counter   INTEGER
 );
 
 CREATE INDEX idx_claims_status_type ON claims(status, type);
