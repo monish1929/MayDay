@@ -51,14 +51,14 @@ If BLE mesh is painful on our devices, everyone needs to know in week 1, not wee
 **Gotcha hit, as expected:** Android 12+ BLE permission model was genuinely fiddly; budgeted time for it, not a sign anything was wrong.
 
 ### Day 3 — Three phones, the actual mesh question
-- [ ] Phones A and C's direct write path deliberately cut (see below — **enforced in software, not by distance**)
-- [ ] Phone B in between, relaying, both discovering A and C
-- [ ] Message from A arrives at C via B, logged `hops=1`
-- [ ] Relay switched off (or B's block re-applied) — confirm delivery **stops**
+- [~] Phones A and C's direct write path deliberately cut (see below — **enforced in software, not by distance**)
+- [~] Phone B in between, relaying, both discovering A and C
+- [~] Message from A arrives at C via B, logged `hops=1`
+- [~] Relay switched off (or B's block re-applied) — confirm delivery **stops**
 
 **Redesigned after two failed attempts — see `PHASE0_MESH_FINDINGS.md` §12–§13 for why.** Distance-based separation doesn't work for this test: discovery range materially exceeds write range and both edges are fuzzy, and worse, if *both* the direct and relayed path exist, de-dup silently hides a working relay (A's direct `hops=0` copy usually wins the race against B's `hops=1` copy, so C logs `hops=0` and drops the relay as a dup — the relay worked and the log said it didn't). Fixed by adding a **tap-to-block** control to each peer chip: blocks writes to that node by label (not peripheral UUID, since BLE addresses rotate — §7) while leaving discovery alone, so the negative control is a fact you can point at instead of a distance you hope holds. `README.md` Day 3 is now split into **3a** (relay logic, desk test, software-blocked topology) and **3b** (relay across real distance, only after 3a passes).
 
-**Still not run since the redesign.** This is the single most important test of the week and it remains the one open item.
+**3a re-run since the redesign: passed.** Confirmed working with the tap-to-block topology. **Granular detail not yet backfilled** — exact hop logs, which direction(s) were run, and explicit confirmation of the negative control (relay OFF → no delivery) still need recording here before this entry is on par with the rest of this log. Until that's filled in, treat "passed" as A's word, not yet as documented evidence. 3b (real distance) has not been attempted.
 
 ### Day 4 — Measurements
 Rough is fine; absent is not.
@@ -71,10 +71,10 @@ Rough is fine; absent is not.
 
 ### Day 5 — Write-up and the size question
 - [~] `PHASE0_MESH_FINDINGS.md` — in progress, not a "one page" any more: 13 sections, real bugs found and fixed documented with root cause (advertisement-name hang, GATT client exhaustion, TX-power ceiling, missing write-path timeout), two range findings, one inconclusive relay attempt with root cause, one write-range session. Lives in `spike/phase0_ble_mesh/`, not shared `Docs/` — throwaway A-owned working material.
-- [ ] Recommendation: is Wi-Fi Direct needed for MVP, or is BLE alone enough? — not yet answered; blocked on Day 3 relay result and a proper walked outdoor range figure.
+- [ ] Recommendation: is Wi-Fi Direct needed for MVP, or is BLE alone enough? — not yet answered; 3a passing removes one blocker, but still needs 3b (relay at real distance) and a proper walked outdoor range figure.
 - [x] **Took the max payload number to the team.** 512B confirmed >> the 400B schema assumption. No fragmentation needed at current schema budget — this is now evidence, not an assumption.
 
-**Exit criteria:** I can answer with evidence — does multi-hop work, what's the real range and discovery time, what does scanning cost, how many bytes fit. **3 of 4 answered; multi-hop is the one still open.**
+**Exit criteria:** I can answer with evidence — does multi-hop work, what's the real range and discovery time, what does scanning cost, how many bytes fit. **3 of 4 fully answered. Multi-hop is partially answered: 3a (relay logic) passed, but without detailed evidence recorded yet, and 3b (relay at real distance) hasn't been attempted.**
 
 **Sync question that's mine to raise:** does measured payload capacity match what B's claims need to serialize? **Answered — yes, with headroom.** 512B measured vs 400B budgeted.
 
