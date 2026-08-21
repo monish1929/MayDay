@@ -88,4 +88,16 @@ class DatabaseHelper {
     final db = await instance.database;
     db.close();
   }
+
+  /// Test seam only — drops the open handle and deletes the underlying file
+  /// so each test starts against a freshly created schema. Never call this
+  /// from app code: it destroys the claim store, and §1.1 says an active SOS
+  /// is never silently discarded.
+  Future<void> resetForTest() async {
+    if (_database != null) {
+      await _database!.close();
+      _database = null;
+    }
+    await deleteDatabase(join(await getDatabasesPath(), 'mayday.db'));
+  }
 }
