@@ -29,7 +29,7 @@ class Claim {
   LogicalClock? resolvedAtLogical;   // logical time, not wall clock — see §4
 
   int hopLimit;                     // decrements per relay hop — see §7
-  Duration displayLifetime;         // how long it stays on the map — see §7
+  Duration? displayLifetime;         // how long it stays on the map — see §7
 
   LogicalClock? createdAtLogical;
   LogicalClock? lastConfirmedAtLogical;
@@ -45,7 +45,7 @@ class Corroboration {
   String deviceId;
   int hopDistance;
   double signalStrength;
-  String firstSeenVia;              // deviceId of whoever relayed it to us — see §3.2
+  String? firstSeenVia;              // deviceId of whoever relayed it to us — see §3.2
   LogicalClock logicalClock;
   bool isVolunteer;
   CorroborationKind kind;            // independentGeneration | explicitAttestation
@@ -195,7 +195,7 @@ For a dead/lost/damaged phone. Always tagged `resolutionMethod = manual`, always
 
 ```dart
 int hopLimit;             // how many more times this claim may be relayed
-Duration displayLifetime; // how long it stays visible on the map before decay
+Duration? displayLifetime; // how long it stays visible on the map before decay
 ```
 
 These are **not the same quantity** and must not share a variable, a config key, or a name. (v1 called both "TTL" and it caused real confusion.)

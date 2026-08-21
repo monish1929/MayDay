@@ -24,17 +24,21 @@ class TrustEngine {
   /// Upgrades a claim to GROUND_CONFIRMED.
   /// This can only be done by a volunteer explicitly confirming on site.
   static void markGroundConfirmed(Claim claim, String volunteerDeviceId) {
-    // No stage skipping: can only move to GROUND_CONFIRMED if it's at least CORROBORATED.
-    // Actually, can a volunteer arrive at an UNCONFIRMED claim and immediately ground confirm it?
-    // "UNCONFIRMED → CORROBORATED → GROUND_CONFIRMED, no stage skipping"
-    // So if it's unconfirmed, we must push it to corroborated first, then ground confirmed.
-    if (claim.claimTrust == ClaimTrust.unconfirmed) {
-      claim.claimTrust = ClaimTrust.corroborated;
-    }
+    // Unconfirmed claims can be moved directly to GROUND_CONFIRMED 
+    // by on-site volunteers. No intermediate state required.
     claim.claimTrust = ClaimTrust.groundConfirmed;
     
     // As a side effect, priority might move to enRoute or similar, but the user specifies that
     // explicitly elsewhere.
+  }
+
+  /// Elevates dispatch priority when a volunteer relays the claim.
+  /// This must be called explicitly during receive, since relaying 
+  /// deliberately does not create a Corroboration (anti-echo rule).
+  static void notePriorityFromRelay(Claim claim) {
+    if (claim.dispatchPriority == DispatchPriority.low) {
+      claim.dispatchPriority = DispatchPriority.seenByVolunteer;
+    }
   }
 
   static void _updateDispatchPriority(Claim claim) {
@@ -82,11 +86,9 @@ class TrustEngine {
       // 3. Weighting by hopDistance and signalStrength
       double hopWeight = 1.0 / (c.hopDistance + 1);
       
-      // Assume signal strength is roughly bounded [0, 1] for this calculation, 
-      // or we can just add a flat multiplier.
+      // Assume signal strength is normalized 0.0 to 1.0.
       // If signal strength isn't known, default to 1.0. 
-      // Let's assume signal strength is normalized 0.0 to 1.0
-      double signalWeight = c.signalStrength > 0.0 ? c.signalStrength : 1.0;
+      double signalWeight = c.signalStrength ?? 1.0;
 
       double score = hopWeight * signalWeight;
 

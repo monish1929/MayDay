@@ -1,5 +1,6 @@
 // lib/data/models/claim_payload.dart
 
+import 'dart:typed_data';
 import 'package:cbor/cbor.dart';
 import '../enums.dart';
 import 'geo_point.dart';
@@ -21,7 +22,30 @@ sealed class ClaimPayload {
         return ResourcePayload.fromCbor(map);
     }
   }
+
+  // Utility to strictly encode 32-bit float as a 4-byte CBOR byte string
+  // to avoid cbor package defaulting to 8-byte doubles.
+  static CborBytes encodeFloat32(double value) {
+    final bytes = Float32List.fromList([value]).buffer.asUint8List();
+    return CborBytes(bytes.toList());
+  }
+
+  static double decodeFloat32(CborValue cbor) {
+    final bytes = Uint8List.fromList((cbor as CborBytes).bytes);
+    return Float32List.view(bytes.buffer)[0];
+  }
 }
+
+// Map Keys
+const _kLat = CborSmallInt(0);
+const _kLon = CborSmallInt(1);
+const _kHeadcount = CborSmallInt(2);
+const _kReporterDeviceId = CborSmallInt(3);
+const _kHazardType = CborSmallInt(4);
+const _kConfirmationCount = CborSmallInt(5);
+const _kCategory = CborSmallInt(6);
+const _kPledgedCount = CborSmallInt(7);
+const _kClaimedReports = CborSmallInt(8);
 
 class SosPayload extends ClaimPayload {
   final GeoPoint location;
@@ -35,19 +59,19 @@ class SosPayload extends ClaimPayload {
   @override
   CborValue toCbor() {
     return CborMap({
-      CborString('lat'): CborFloat(location.lat),
-      CborString('lon'): CborFloat(location.lon),
-      if (headcount != null) CborString('headcount'): CborSmallInt(headcount!.index),
+      _kLat: ClaimPayload.encodeFloat32(location.lat),
+      _kLon: ClaimPayload.encodeFloat32(location.lon),
+      if (headcount != null) _kHeadcount: CborSmallInt(headcount!.index),
     });
   }
 
   factory SosPayload.fromCbor(CborMap map) {
-    final lat = (map[CborString('lat')] as CborFloat).value;
-    final lon = (map[CborString('lon')] as CborFloat).value;
+    final lat = ClaimPayload.decodeFloat32(map[_kLat]!);
+    final lon = ClaimPayload.decodeFloat32(map[_kLon]!);
     
     HeadcountBucket? hc;
-    if (map.containsKey(CborString('headcount'))) {
-      hc = HeadcountBucket.values[(map[CborString('headcount')] as CborSmallInt).value];
+    if (map.containsKey(_kHeadcount)) {
+      hc = HeadcountBucket.values[(map[_kHeadcount] as CborSmallInt).value];
     }
 
     return SosPayload(
@@ -71,21 +95,21 @@ class SosProxyPayload extends ClaimPayload {
   @override
   CborValue toCbor() {
     return CborMap({
-      CborString('lat'): CborFloat(location.lat),
-      CborString('lon'): CborFloat(location.lon),
-      CborString('reporterDeviceId'): CborString(reporterDeviceId),
-      if (headcount != null) CborString('headcount'): CborSmallInt(headcount!.index),
+      _kLat: ClaimPayload.encodeFloat32(location.lat),
+      _kLon: ClaimPayload.encodeFloat32(location.lon),
+      _kReporterDeviceId: CborString(reporterDeviceId),
+      if (headcount != null) _kHeadcount: CborSmallInt(headcount!.index),
     });
   }
 
   factory SosProxyPayload.fromCbor(CborMap map) {
-    final lat = (map[CborString('lat')] as CborFloat).value;
-    final lon = (map[CborString('lon')] as CborFloat).value;
-    final reporterDeviceId = (map[CborString('reporterDeviceId')] as CborString).toString();
+    final lat = ClaimPayload.decodeFloat32(map[_kLat]!);
+    final lon = ClaimPayload.decodeFloat32(map[_kLon]!);
+    final reporterDeviceId = (map[_kReporterDeviceId] as CborString).toString();
     
     HeadcountBucket? hc;
-    if (map.containsKey(CborString('headcount'))) {
-      hc = HeadcountBucket.values[(map[CborString('headcount')] as CborSmallInt).value];
+    if (map.containsKey(_kHeadcount)) {
+      hc = HeadcountBucket.values[(map[_kHeadcount] as CborSmallInt).value];
     }
 
     return SosProxyPayload(
@@ -110,20 +134,19 @@ class HazardReportPayload extends ClaimPayload {
   @override
   CborValue toCbor() {
     return CborMap({
-      CborString('lat'): CborFloat(location.lat),
-      CborString('lon'): CborFloat(location.lon),
-      CborString('hazardType'): CborSmallInt(hazardType.index),
-      CborString('confirmationCount'): CborSmallInt(confirmationCount),
+      _kLat: ClaimPayload.encodeFloat32(location.lat),
+      _kLon: ClaimPayload.encodeFloat32(location.lon),
+      _kHazardType: CborSmallInt(hazardType.index),
+      _kConfirmationCount: CborSmallInt(confirmationCount),
     });
   }
 
   factory HazardReportPayload.fromCbor(CborMap map) {
-    final lat = (map[CborString('lat')] as CborFloat).value;
-    final lon = (map[CborString('lon')] as CborFloat).value;
-    final typeIdx = (map[CborString('hazardType')] as CborSmallInt).value;
+    final lat = ClaimPayload.decodeFloat32(map[_kLat]!);
+    final lon = ClaimPayload.decodeFloat32(map[_kLon]!);
+    final typeIdx = (map[_kHazardType] as CborSmallInt).value;
     
-    // confirmationCount can be CborSmallInt or CborInt depending on size
-    final CborValue countVal = map[CborString('confirmationCount')]!;
+    final CborValue countVal = map[_kConfirmationCount]!;
     int count = countVal is CborSmallInt ? countVal.value : (countVal as CborInt).toInt();
 
     return HazardReportPayload(
@@ -147,29 +170,28 @@ class ResourcePayload extends ClaimPayload {
     required this.claimedReports,
   });
 
-  // Display-time computed availability per schema §8.1
   int get available => pledgedCount > claimedReports ? pledgedCount - claimedReports : 0;
 
   @override
   CborValue toCbor() {
     return CborMap({
-      CborString('lat'): CborFloat(location.lat),
-      CborString('lon'): CborFloat(location.lon),
-      CborString('category'): CborSmallInt(category.index),
-      CborString('pledgedCount'): CborSmallInt(pledgedCount),
-      CborString('claimedReports'): CborSmallInt(claimedReports),
+      _kLat: ClaimPayload.encodeFloat32(location.lat),
+      _kLon: ClaimPayload.encodeFloat32(location.lon),
+      _kCategory: CborSmallInt(category.index),
+      _kPledgedCount: CborSmallInt(pledgedCount),
+      _kClaimedReports: CborSmallInt(claimedReports),
     });
   }
 
   factory ResourcePayload.fromCbor(CborMap map) {
-    final lat = (map[CborString('lat')] as CborFloat).value;
-    final lon = (map[CborString('lon')] as CborFloat).value;
-    final catIdx = (map[CborString('category')] as CborSmallInt).value;
+    final lat = ClaimPayload.decodeFloat32(map[_kLat]!);
+    final lon = ClaimPayload.decodeFloat32(map[_kLon]!);
+    final catIdx = (map[_kCategory] as CborSmallInt).value;
     
-    final CborValue pledgedVal = map[CborString('pledgedCount')]!;
+    final CborValue pledgedVal = map[_kPledgedCount]!;
     int pledged = pledgedVal is CborSmallInt ? pledgedVal.value : (pledgedVal as CborInt).toInt();
 
-    final CborValue claimedVal = map[CborString('claimedReports')]!;
+    final CborValue claimedVal = map[_kClaimedReports]!;
     int claimed = claimedVal is CborSmallInt ? claimedVal.value : (claimedVal as CborInt).toInt();
 
     return ResourcePayload(

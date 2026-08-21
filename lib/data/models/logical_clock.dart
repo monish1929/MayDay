@@ -1,5 +1,6 @@
 // lib/data/models/logical_clock.dart
 
+import 'package:cbor/cbor.dart';
 class LogicalClock implements Comparable<LogicalClock> {
   final String deviceId;
   final int counter;
@@ -31,12 +32,18 @@ class LogicalClock implements Comparable<LogicalClock> {
   }
 
   /// When receiving a message, update the logical clock to the max of current and received, plus one.
-  /// Wait, the spec says "increments on every send". If it's a Lamport clock, it also updates on receive.
-  /// "LogicalClock — per-device counter, increments on every send"
+  /// (Lamport clock behavior: updates on both send and receive)
   LogicalClock updateFromReceive(LogicalClock received) {
     return LogicalClock(
       deviceId: deviceId,
       counter: (counter > received.counter ? counter : received.counter) + 1,
     );
+  }
+
+  CborValue toCbor() {
+    return CborList([
+      CborString(deviceId),
+      CborSmallInt(counter),
+    ]);
   }
 }

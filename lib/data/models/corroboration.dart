@@ -6,7 +6,7 @@ import 'logical_clock.dart';
 class Corroboration {
   final String deviceId;
   final int hopDistance;
-  final double signalStrength;
+  final double? signalStrength;
   final String? firstSeenVia;
   final LogicalClock logicalClock;
   final bool isVolunteer;
@@ -15,7 +15,7 @@ class Corroboration {
   const Corroboration({
     required this.deviceId,
     required this.hopDistance,
-    required this.signalStrength,
+    this.signalStrength,
     this.firstSeenVia,
     required this.logicalClock,
     required this.isVolunteer,

@@ -20,14 +20,14 @@ class Claim {
   ClaimStatus status;
   ResolutionMethod? resolutionMethod;
   String? resolvedByVolunteerId;
-  DateTime? resolvedAtLogical;
+  LogicalClock? resolvedAtLogical;
 
   int hopLimit;
   Duration? displayLifetime;
 
-  DateTime? createdAtLogical;
-  DateTime? lastConfirmedAtLogical;
-  DateTime? archivedAtLogical;
+  LogicalClock? createdAtLogical;
+  LogicalClock? lastConfirmedAtLogical;
+  LogicalClock? archivedAtLogical;
 
   ClaimPayload payload;
 
@@ -62,7 +62,16 @@ class Claim {
     );
   }
 
-  // To be implemented: CBOR serialization for the full claim if needed over the wire, 
-  // but typically the wire format is handled at the envelope level (Envelope in §9.1)
-  // containing the body (which is the payload). The `payload` encodes to CBOR.
+  /// Returns the CBOR representation of the immutable core of the claim.
+  /// This is the data that the originSignature is computed over.
+  CborValue toSignedCoreCbor() {
+    return CborList([
+      CborString(id),
+      CborSmallInt(type.index),
+      CborString(originDeviceId),
+      logicalClock.toCbor(),
+      payload.toCbor(),
+      if (createdAtLogical != null) createdAtLogical!.toCbor() else const CborNull(),
+    ]);
+  }
 }

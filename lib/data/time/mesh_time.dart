@@ -30,10 +30,7 @@ class MeshTimeGossip {
   /// This is used purely for UI rendering ("about 2 hours ago").
   /// It should NEVER be used for ordering, merging, or decay logic.
   DateTime estimateDisplayTime(LogicalClock clock) {
-    // Basic stub mapping: counter * arbitrary multiplier + offset
-    // In practice, this would involve a robust mapping from logical ticks to estimated real-time.
-    int estimatedEpochMs = (clock.counter * 1000) + _estimatedOffsetMs;
-    return DateTime.fromMillisecondsSinceEpoch(estimatedEpochMs);
+    throw UnimplementedError('Stub - do not bind UI to this yet. Needs robust logical to real-time mapping.');
   }
 
   /// Format an estimated time as a relative string (e.g. "about 2 hours ago").
