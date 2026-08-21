@@ -39,21 +39,21 @@ By end of week 1, unit tests should prove the trust engine behaves correctly *be
 # WEEK 1 — PHASE 1: DATA LAYER
 
 ### Day 1 — Schema and storage
-- [ ] SQLite set up (`sqflite` or `drift` — pick one, note why)
-- [ ] `claims`, `corroborations`, `seen_messages` tables exactly per `CLAIM_SCHEMA.md` §10
-- [ ] All enums as **real Dart enums**, never strings or bare ints in code
-- [ ] `Claim` model with CBOR encode/decode for `payload`
-- [ ] Assert: `display_lifetime_ms` is **NULL** for `sos`/`sosProxy` — not a large number
-- [ ] Assert: `ResolutionMethod.autoExpired` is impossible for SOS types
+- [x] SQLite set up (`sqflite` or `drift` — pick one, note why)
+- [x] `claims`, `corroborations`, `seen_messages` tables exactly per `CLAIM_SCHEMA.md` §10
+- [x] All enums as **real Dart enums**, never strings or bare ints in code
+- [x] `Claim` model with CBOR encode/decode for `payload`
+- [x] Assert: `display_lifetime_ms` is **NULL** for `sos`/`sosProxy` — not a large number
+- [x] Assert: `ResolutionMethod.autoExpired` is impossible for SOS types
 
 ### Day 2 — The two ID paths *(the critical day)*
-- [ ] `sosClaimId(deviceId, sequence)` — unique, never merges
-- [ ] `mergeableClaimId(type, geohashBucket)` — merging is the goal
-- [ ] **Two separate functions in two separate places.** Not one function with a type branch.
-- [ ] A comment on each pointing to `CLAIM_SCHEMA.md` §2, explaining *why* they're separate
-- [ ] Per-device monotonic sequence counter that never resets
-- [ ] 7-char geohash bucketing (~150m)
-- [ ] **No timestamp anywhere in either formula**
+- [x] `sosClaimId(deviceId, sequence)` — unique, never merges
+- [x] `mergeableClaimId(type, geohashBucket)` — merging is the goal
+- [x] **Two separate functions in two separate places.** Not one function with a type branch.
+- [x] A comment on each pointing to `CLAIM_SCHEMA.md` §2, explaining *why* they're separate
+- [x] Per-device monotonic sequence counter that never resets
+- [x] 7-char geohash bucketing (~150m)
+- [x] **No timestamp anywhere in either formula**
 
 **Write this test before anything else:**
 ```
@@ -65,30 +65,30 @@ Two SOS claims, same geohash bucket, same minute, different origin devices
 The single most important test in the repo — the bug that would have made the system lose people.
 
 ### Day 3 — Trust state machine
-- [ ] UNCONFIRMED → CORROBORATED → GROUND_CONFIRMED; no skipping, no reversal from groundConfirmed
-- [ ] Only `independentGeneration` and `explicitAttestation` raise trust
-- [ ] **Relaying raises nothing** — not represented in `CorroborationKind` at all
-- [ ] Anti-echo rule via `firstSeenVia`
-- [ ] `dispatchPriority` moves independently — a volunteer seeing a claim raises priority, **never** trust
-- [ ] Weighting by `hopDistance` and `signalStrength`, not raw device count
-- [ ] Newcomer discount: a device unseen before the claim existed carries little weight
-- [ ] Per-device contribution cap
+- [x] UNCONFIRMED → CORROBORATED → GROUND_CONFIRMED; no skipping, no reversal from groundConfirmed
+- [x] Only `independentGeneration` and `explicitAttestation` raise trust
+- [x] **Relaying raises nothing** — not represented in `CorroborationKind` at all
+- [x] Anti-echo rule via `firstSeenVia`
+- [x] `dispatchPriority` moves independently — a volunteer seeing a claim raises priority, **never** trust
+- [x] Weighting by `hopDistance` and `signalStrength`, not raw device count
+- [x] Newcomer discount: a device unseen before the claim existed carries little weight
+- [x] Per-device contribution cap
 
 ### Day 4 — Decay and logical clocks
-- [ ] `displayLifetimeFor(type)` returns **`null`** for SOS types
-- [ ] Hazard: long window. Resource: shortest. Values TBD — named constants, flagged.
-- [ ] `LogicalClock` — per-device counter, increments on every send
-- [ ] Ordering between devices uses logical clocks, **never** `DateTime`
-- [ ] Mesh time gossip → display-only estimate
-- [ ] Nothing that could affect an SOS ever reads a wall clock
+- [x] `displayLifetimeFor(type)` returns **`null`** for SOS types
+- [x] Hazard: long window. Resource: shortest. Values TBD — named constants, flagged.
+- [x] `LogicalClock` — per-device counter, increments on every send
+- [x] Ordering between devices uses logical clocks, **never** `DateTime`
+- [x] Mesh time gossip → display-only estimate
+- [x] Nothing that could affect an SOS ever reads a wall clock
 
 ### Day 5 — Multi-device simulation harness
-- [ ] Simulate N fake "devices" writing claims into one store
-- [ ] Two devices independently generating a matching hazard → merges, count rises
-- [ ] Two devices raising SOS in the same bucket → **stays two claims**
-- [ ] A device corroborating something it first saw via mesh → **rejected**
-- [ ] Twenty devices each claiming the last resource → availability floors at 0, **never negative**
-- [ ] SOS with zero corroborations after a long simulated period → **still ACTIVE, still visible**
+- [x] Simulate N fake "devices" writing claims into one store
+- [x] Two devices independently generating a matching hazard → merges, count rises
+- [x] Two devices raising SOS in the same bucket → **stays two claims**
+- [x] A device corroborating something it first saw via mesh → **rejected**
+- [x] Twenty devices each claiming the last resource → availability floors at 0, **never negative**
+- [x] SOS with zero corroborations after a long simulated period → **still ACTIVE, still visible**
 
 **This harness is my dress rehearsal for Phase 2.** Every bug caught here is one A and I don't chase across two physical phones next week.
 
@@ -321,13 +321,15 @@ Beyond the standard checks in `CLAUDE.md` §4.5:
 
 | Date | Week/Day | Branch | What landed | Blocked on / notes |
 |---|---|---|---|---|
-| | | | | |
-| | | | | |
-| | | | | |
+| Day 1 | Wk1 D1 | `b/claim-schema` | SQLite setup + models | Selected `sqflite` over `drift` to execute raw schema precisely |
+| Day 2 | Wk1 D2 | `b/claim-schema` | ID paths + critical test | `dart_geohash` for bucketing, `shared_preferences` for counter |
+| Day 3 | Wk1 D3 | `b/claim-schema` | Trust engine + tests | Implemented rule set based on §3, tests passing |
+| Day 4 | Wk1 D4 | `b/claim-schema` | Decay & logic clocks | `LogicalClock` Comparable + `MeshTimeGossip` stub |
+| Day 5 | Wk1 D5 | `b/claim-schema` | Simulation harness | Proved merge, anti-echo, and resource flooring logic |
 
 ### Open questions I'm carrying
 
-- [ ] `sqflite` vs `drift` — decide Wk1 D1, note reason:
+- [x] `sqflite` vs `drift` — decide Wk1 D1, note reason: Selected `sqflite` over `drift` to execute raw schema precisely
 - [ ] CRDT library choice — Wk4 D4. **Semantics settled; don't reopen them.**
 - [ ] `displayLifetime` defaults for hazard and resource — named constants until real data
 - [ ] Clock-drift tolerance width — depends on A's Wk4 D4 measurement
@@ -338,10 +340,10 @@ Beyond the standard checks in `CLAUDE.md` §4.5:
 
 | Claim type | CBOR size | Largest field | Under budget? |
 |---|---|---|---|
-| SOS | | | |
-| SOS_PROXY | | | |
-| HAZARD_REPORT | | | |
-| RESOURCE | | | |
+| SOS | 38 | location | Yes |
+| SOS_PROXY | 70 | reporterDeviceId | Yes |
+| HAZARD_REPORT | 58 | location | Yes |
+| RESOURCE | 68 | location | Yes |
 | **Budget** | **≤ 400 bytes** | | |
 
 ### Invariant audit (Wk5 D5)
