@@ -1,3 +1,4 @@
+import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:cbor/cbor.dart';
 import 'package:mayday/data/models/claim.dart';
@@ -12,7 +13,8 @@ void main() {
       id: 'test-id',
       type: ClaimType.sos,
       originDeviceId: 'dev-1',
-      originSignature: 'dummy-sig',
+      originSequence: 1,
+      originSignature: Uint8List(64),
       logicalClock: LogicalClock(deviceId: 'dev-1', counter: 1),
       claimTrust: ClaimTrust.unconfirmed,
       dispatchPriority: DispatchPriority.low,

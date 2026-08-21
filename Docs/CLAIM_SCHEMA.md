@@ -4,8 +4,8 @@
 
 This is the *data contract* — the exact shape of a Claim, the two identity rules, and the state machines that govern it. `CLAUDE.md` explains why these rules exist; this file is the reference for what to actually implement.
 
-Last changed by: B
-Last changed on: 2026-08-21 — added an explicit exception to §3 allowing on-site volunteers to bypass CORROBORATED and move UNCONFIRMED claims directly to GROUND_CONFIRMED.
+Last changed by: A+B (Phase 2 pairing)
+Last changed on: 2026-08-21 — §1 gains `originSequence` (§10 always had the column; §1 had no field to fill it from) and types `originSignature` as bytes; §4 now states that the sequence counter and the logical clock are two separate counters. All three aware.
 
 ---
 
@@ -16,7 +16,8 @@ class Claim {
   String id;                        // see §2 — computed differently per type
   ClaimType type;                   // sos | sosProxy | hazardReport | resource
   String originDeviceId;
-  String originSignature;           // Ed25519, over the full signed payload — see §5
+  int originSequence;               // the SequenceCounter value used to build `id` — see §2, §4
+  Uint8List originSignature;        // Ed25519, 64 raw bytes, over the signed core — see §5
   LogicalClock logicalClock;        // see §4
 
   ClaimTrust claimTrust;            // unconfirmed | corroborated | groundConfirmed — see §3
@@ -133,6 +134,7 @@ class LogicalClock {
 ```
 
 - Ordering between two events from different devices: compare logical clocks. This answers "which happened more recently, relative to each other" — which is all the merge/decay logic actually needs.
+- **`logicalClock.counter` and `originSequence` are two different counters and must never be unified.** Both are monotonic per-device integers, which makes them look interchangeable; they are not. `originSequence` (`SequenceCounter`) counts only claims *this* device originated, because it is hashed into the SOS claim id (§2) and that id has to stay stable for the person who raised it. `logicalClock.counter` (`DeviceClock`) is a Lamport clock: it advances on send **and jumps to `max(local, remote) + 1` on receive**. Deriving `origin_sequence` from the logical clock means a device's SOS id would shift with unrelated mesh traffic.
 - **Mesh time gossip** (separate mechanism, for the *display* layer only): when devices meet, they exchange clock readings and maintain a running estimate of mesh-median time, weighting volunteer nodes' clocks higher.
 - UI shows **relative time only** — "about 2 hours ago." Never render a precise timestamp; it would be fabricated precision.
 - `createdAtLogical`, `lastConfirmedAtLogical`, `resolvedAtLogical`, `archivedAtLogical` are all `LogicalClock` values (§1), not `DateTime.now()`. Naming keeps this explicit — don't rename these to drop `Logical`. **§1's Dart snippet previously typed these as `DateTime` — that was a drafting error, fixed 2026-08-21. This prose was always the correct rule.**

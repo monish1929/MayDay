@@ -8,7 +8,6 @@ import 'package:mayday/data/enums.dart';
 import 'package:mayday/data/database/database_helper.dart';
 
 import 'package:mayday/data/identity/geohash_utils.dart';
-import 'package:mayday/data/models/geo_point.dart';
 
 class ClaimRepository {
   final DatabaseHelper _dbHelper = DatabaseHelper.instance;
@@ -60,45 +59,27 @@ class ClaimRepository {
   }
 
   Map<String, dynamic> _toMap(Claim claim) {
-    // Extract location dynamically since it's common across all payload types
-    // but the getter is defined in subclasses. For storage indexing (lat, lon).
-    double lat = 0.0;
-    double lon = 0.0;
-    
-    if (claim.payload is SosPayload) {
-      lat = (claim.payload as SosPayload).location.lat;
-      lon = (claim.payload as SosPayload).location.lon;
-    } else if (claim.payload is SosProxyPayload) {
-      lat = (claim.payload as SosProxyPayload).location.lat;
-      lon = (claim.payload as SosProxyPayload).location.lon;
-    } else if (claim.payload is HazardReportPayload) {
-      lat = (claim.payload as HazardReportPayload).location.lat;
-      lon = (claim.payload as HazardReportPayload).location.lon;
-    } else if (claim.payload is ResourcePayload) {
-      lat = (claim.payload as ResourcePayload).location.lat;
-      lon = (claim.payload as ResourcePayload).location.lon;
-    }
-    
-    // Convert origin_signature to bytes (assuming it's a base64 or hex string, or just string for now)
-    // Actually the schema uses BLOB for origin_signature. We'll store it as bytes or string if needed.
-    // For now we'll just store the string as bytes for SQLite compatibility.
-    // Wait, the Claim object holds it as String. Let's just use utf8.encode or similar.
-    final originSignatureBlob = Uint8List.fromList(claim.originSignature.codeUnits);
-    
-    // Payloads
-    final payloadCbor = cbor.encode(claim.payload.toCbor());
+    // Declared on the sealed base, so a new payload type is a compile error
+    // rather than a silent (0, 0) fallback.
+    final location = claim.payload.location;
+    // cbor.encode() hands back a Uint8Buffer, which sqflite refuses to bind
+    // ("Invalid sql argument type"). It must be a Uint8List to reach a BLOB.
+    final payloadCbor = Uint8List.fromList(cbor.encode(claim.payload.toCbor()));
 
     return {
       'id': claim.id,
       'type': claim.type.index,
       'origin_device_id': claim.originDeviceId,
-      'origin_sequence': claim.logicalClock.counter, // The local sequence num when created
+      // Identity, not ordering. Deliberately NOT logicalClock.counter: that
+      // is a Lamport clock and moves on receive (§4), which would rewrite the
+      // number hashed into a SOS id (§2). See DeviceClock.
+      'origin_sequence': claim.originSequence,
       'clock_device_id': claim.logicalClock.deviceId,
       'clock_counter': claim.logicalClock.counter,
-      'lat': lat,
-      'lon': lon,
-      'geohash_bucket': getGeohashBucket(GeoPoint(lat: lat, lon: lon)),
-      'origin_signature': originSignatureBlob,
+      'lat': location.lat,
+      'lon': location.lon,
+      'geohash_bucket': getGeohashBucket(location),
+      'origin_signature': claim.originSignature,
       'claim_trust': claim.claimTrust.index,
       'dispatch_priority': claim.dispatchPriority.index,
       'status': claim.status.index,
@@ -126,15 +107,12 @@ class ClaimRepository {
     final decodedCbor = cbor.decode(payloadBytes) as CborMap;
     final payload = ClaimPayload.fromCbor(type, decodedCbor);
 
-    // Decode signature
-    final sigBytes = map['origin_signature'] as List<int>;
-    final sig = String.fromCharCodes(sigBytes);
-
     return Claim(
       id: map['id'] as String,
       type: type,
       originDeviceId: map['origin_device_id'] as String,
-      originSignature: sig,
+      originSequence: map['origin_sequence'] as int,
+      originSignature: Uint8List.fromList(map['origin_signature'] as List<int>),
       logicalClock: LogicalClock(
         deviceId: map['clock_device_id'] as String,
         counter: map['clock_counter'] as int,
