@@ -4,8 +4,8 @@
 
 This is the *data contract* — the exact shape of a Claim, the two identity rules, and the state machines that govern it. `CLAUDE.md` explains why these rules exist; this file is the reference for what to actually implement.
 
-Last changed by: A
-Last changed on: 2026-08-21 — fixed §1/§10 typing `createdAtLogical`/`lastConfirmedAtLogical`/`archivedAtLogical`/`resolvedAtLogical` as `DateTime` when §4 already required `LogicalClock` (B and C both aware; C's implementation already used the correct type, B's followed the doc's stale type)
+Last changed by: B
+Last changed on: 2026-08-21 — added an explicit exception to §3 allowing on-site volunteers to bypass CORROBORATED and move UNCONFIRMED claims directly to GROUND_CONFIRMED.
 
 ---
 
@@ -86,7 +86,9 @@ String mergeableClaimId(ClaimType type, String geohashBucket) =>
 UNCONFIRMED → CORROBORATED → GROUND_CONFIRMED
 ```
 
-No skipping stages. No going backward once GROUND_CONFIRMED (a volunteer physically assessed it — that doesn't get un-true).
+No skipping stages, with exactly one exception: **a volunteer physically confirming an unconfirmed claim on-site bypasses CORROBORATED and jumps directly to GROUND_CONFIRMED.** (Physical presence overrides the need for an intermediate digital attestation).
+
+No going backward once GROUND_CONFIRMED (a volunteer physically assessed it — that doesn't get un-true).
 
 ### 3.1 What moves a claim to CORROBORATED
 
