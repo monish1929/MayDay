@@ -23,16 +23,20 @@ sealed class ClaimPayload {
     }
   }
 
-  // Utility to strictly encode 32-bit float as a 4-byte CBOR byte string
-  // to avoid cbor package defaulting to 8-byte doubles.
+  // Utility to strictly encode 32-bit float as a 4-byte CBOR byte string.
+  // We use CborBytes instead of CborFloat because the Dart `cbor` package 
+  // automatically encodes all Dart doubles as 8-byte CBOR floats.
+  // Using bytes loses the self-describing nature of CBOR numbers, but 
+  // guarantees the exact 4-byte footprint required by the §9.2 budget.
+  // Endianness is explicitly little-endian for wire transit.
   static CborBytes encodeFloat32(double value) {
-    final bytes = Float32List.fromList([value]).buffer.asUint8List();
-    return CborBytes(bytes.toList());
+    final byteData = ByteData(4)..setFloat32(0, value, Endian.little);
+    return CborBytes(byteData.buffer.asUint8List().toList());
   }
 
   static double decodeFloat32(CborValue cbor) {
     final bytes = Uint8List.fromList((cbor as CborBytes).bytes);
-    return Float32List.view(bytes.buffer)[0];
+    return ByteData.view(bytes.buffer).getFloat32(0, Endian.little);
   }
 }
 

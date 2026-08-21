@@ -43,13 +43,19 @@ class DatabaseHelper {
         claim_trust         INTEGER NOT NULL,
         dispatch_priority   INTEGER NOT NULL,
         status              INTEGER NOT NULL,
-        payload             BLOB    NOT NULL,   -- CBOR
+        payload             BLOB    NOT NULL,   -- CBOR, per §8
         resolution_method   INTEGER,            -- NULL while ACTIVE
         resolved_by         TEXT,
+        resolved_at_logical_device_id TEXT,     -- LogicalClock, NULL until resolved — see §4
+        resolved_at_logical_counter   INTEGER,
         hop_limit           INTEGER NOT NULL,
-        display_lifetime_ms INTEGER,            -- NULL for sos / sosProxy
-        created_at_logical  INTEGER NOT NULL,
-        archived_at_logical INTEGER
+        display_lifetime_ms INTEGER,            -- NULL for sos / sosProxy — see below
+        created_at_logical_device_id  TEXT    NOT NULL,  -- LogicalClock, mandatory: every claim has a creation event — see §4
+        created_at_logical_counter    INTEGER NOT NULL,
+        last_confirmed_at_logical_device_id TEXT,        -- LogicalClock, NULL until first re-confirmation
+        last_confirmed_at_logical_counter   INTEGER,
+        archived_at_logical_device_id TEXT,     -- LogicalClock, NULL until archived
+        archived_at_logical_counter   INTEGER
       );
     ''');
 
