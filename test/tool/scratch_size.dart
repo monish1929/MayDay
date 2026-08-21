@@ -1,9 +1,8 @@
+// ignore_for_file: avoid_print
 import 'package:mayday/data/models/claim_payload.dart';
 import 'package:mayday/data/models/geo_point.dart';
 import 'package:mayday/data/enums.dart';
 import 'package:cbor/cbor.dart';
-import 'dart:io';
-
 void main() {
   final loc = const GeoPoint(lat: 12.9716, lon: 77.5946);
   

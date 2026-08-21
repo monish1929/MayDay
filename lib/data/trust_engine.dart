@@ -2,7 +2,6 @@
 
 import 'enums.dart';
 import 'models/claim.dart';
-import 'models/corroboration.dart';
 
 class TrustEngine {
   /// The score required to move a claim from UNCONFIRMED to CORROBORATED.
