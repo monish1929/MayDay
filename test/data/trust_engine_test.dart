@@ -209,5 +209,22 @@ void main() {
       TrustEngine.recomputeTrustAndPriority(baseClaim, isNewcomer: (_) => false);
       expect(baseClaim.claimTrust, equals(ClaimTrust.corroborated));
     });
+    test('markGroundConfirmed overrides sequence and directly assigns groundConfirmed', () {
+      baseClaim.claimTrust = ClaimTrust.unconfirmed;
+      TrustEngine.markGroundConfirmed(baseClaim, 'volunteer1');
+      expect(baseClaim.claimTrust, equals(ClaimTrust.groundConfirmed));
+    });
+
+    test('notePriorityFromRelay respects isVolunteer gate', () {
+      baseClaim.dispatchPriority = DispatchPriority.low;
+      
+      // Non-volunteer relay should not affect priority
+      TrustEngine.notePriorityFromRelay(baseClaim, isVolunteer: false);
+      expect(baseClaim.dispatchPriority, equals(DispatchPriority.low));
+
+      // Volunteer relay should elevate priority
+      TrustEngine.notePriorityFromRelay(baseClaim, isVolunteer: true);
+      expect(baseClaim.dispatchPriority, equals(DispatchPriority.seenByVolunteer));
+    });
   });
 }

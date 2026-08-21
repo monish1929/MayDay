@@ -24,15 +24,10 @@ class TrustEngine {
   /// Upgrades a claim to GROUND_CONFIRMED.
   /// This can only be done by a volunteer explicitly confirming on site.
   static void markGroundConfirmed(Claim claim, String volunteerDeviceId) {
-    // §3: UNCONFIRMED → CORROBORATED → GROUND_CONFIRMED, no stage skipping.
-    // If a volunteer arrives at an unconfirmed claim, we must transition it 
-    // sequentially.
-    if (claim.claimTrust == ClaimTrust.unconfirmed) {
-      claim.claimTrust = ClaimTrust.corroborated;
-    }
+    // Explicitly overrides the §3 sequence. A volunteer physically on-site
+    // is the strongest possible signal; we bypass CORROBORATED entirely.
     claim.claimTrust = ClaimTrust.groundConfirmed;
     
-    // As a side effect, we record who confirmed it. (Assuming claim has a field for this or similar tracking)
     // The actual resolved_by/confirmed_by tracking happens at the Claim level,
     // but the engine ensures the trust state is valid.
   }
