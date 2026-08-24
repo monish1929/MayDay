@@ -41,6 +41,9 @@ dependencies:
   dart_geohash: ^2.1.0
   shared_preferences: ^2.5.5
   path: ^1.9.1
+  # Ed25519 sign/verify (§5). Pure Dart — no platform channel, so data/ can
+  # sign and mesh/ can verify in the same unit tests, no device required.
+  cryptography: ^2.7.0
 
 dev_dependencies:
   flutter_test:
