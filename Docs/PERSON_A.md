@@ -37,48 +37,46 @@ If BLE mesh is painful on our devices, everyone needs to know in week 1, not wee
 
 # WEEK 1 — PHASE 0: BLE MESH SPIKE
 
-> ⚠️ **The real Week 1 progress is not in this copy.** It lives on `a/ble-mesh-spike`, which has never been merged to `main` — Days 1–2 ticked, 3a marked `[~]` (passed, detail not yet backfilled), Day 4 partially measured, the measurements table filled in, and five progress-log entries. This file was branched from `main`, so Week 1 below is still the blank template and is **wrong**.
->
-> Reconcile before either branch merges, or git will conflict across this whole section. Week 2 below is current and accurate.
-
-**Throwaway code.** A separate scratch project, not the real app. The deliverable is *knowledge*. Resist making it nice.
+**Throwaway code.** A separate scratch project, not the real app — `spike/phase0_ble_mesh/`, not `lib/mesh/`. The deliverable is *knowledge*. Resist making it nice.
 
 ### Day 1–2 — Two phones talking
-- [ ] Scratch Flutter project; `flutter_blue_plus` or `flutter_reactive_ble` (pick one, note why)
-- [ ] Android BLE permissions (`BLUETOOTH_SCAN`, `BLUETOOTH_ADVERTISE`, `BLUETOOTH_CONNECT`, location on older APIs)
-- [ ] Phone 1 advertises a custom service UUID
-- [ ] Phone 2 scans and discovers it
-- [ ] Connect, write a hardcoded string over a GATT characteristic
-- [ ] Phone 2 displays it on receipt
-- [ ] **Both directions** — each phone can send and receive
+- [x] Scratch Flutter project — `spike/phase0_ble_mesh/`. Package: **`bluetooth_low_energy` ^6.2.1**, not `flutter_blue_plus`/`flutter_reactive_ble` — both are central-role only (scan+connect), neither can advertise, and a mesh node has to be peripheral **and** central at once. `flutter_ble_peripheral` advertises but exposes no GATT server. `bluetooth_low_energy` is the only Dart option that does both roles, including a GATT server with write callbacks. Trade-off: smaller user base. Fallback if it misbehaves: hand-written Android platform channel over `BluetoothGattServer`.
+- [x] Android BLE permissions sorted — fixed a real bug where the spike unconditionally requested `locationWhenInUse` and treated any denial as fatal, when it's correctly unrequestable on API 31+ (manifest declares it `maxSdkVersion=30`, matching the `neverForLocation` flag on `BLUETOOTH_SCAN`). Verified clean on a real API 33 device.
+- [x] Phone 1 advertises a custom service UUID — confirmed via `BluetoothGattServer addService()`/`onServiceAdded() status=0`
+- [x] Phone 2 scans and discovers it — `FOUND` fired, 245ms on the one clean-methodology sample
+- [x] Connect, write a hardcoded string over a GATT characteristic — `20B OK` write confirmed on real hardware
+- [x] Phone 2 displays it on receipt — confirmed by direct observation
+- [x] **Both directions** — A→B and B→A both confirmed. Bonus: de-dup cache verified working (A correctly dropped its own message after B relayed it back)
 
-**Expect trouble here:** the Android 12+ BLE permission model is genuinely fiddly and plugin docs lag behind. Budget time; it isn't a sign anything's wrong.
+**Gotcha hit, as expected:** Android 12+ BLE permission model was genuinely fiddly; budgeted time for it, not a sign anything was wrong.
 
 ### Day 3 — Three phones, the actual mesh question
-- [ ] Phones A and C deliberately **out of range** of each other (verify they can't see each other directly first)
-- [ ] Phone B in between, in range of both
-- [ ] Message from A arrives at C via B
-- [ ] Move B out of the picture — confirm delivery **stops**. This proves genuine relay.
+- [~] Phones A and C's direct write path deliberately cut (see below — **enforced in software, not by distance**)
+- [~] Phone B in between, relaying, both discovering A and C
+- [~] Message from A arrives at C via B, logged `hops=1`
+- [~] Relay switched off (or B's block re-applied) — confirm delivery **stops**
 
-**Single most important test of the week.** If multi-hop doesn't work, the architecture needs rethinking and everyone must know immediately.
+**Redesigned after two failed attempts — see `PHASE0_MESH_FINDINGS.md` §12–§13 for why.** Distance-based separation doesn't work for this test: discovery range materially exceeds write range and both edges are fuzzy, and worse, if *both* the direct and relayed path exist, de-dup silently hides a working relay (A's direct `hops=0` copy usually wins the race against B's `hops=1` copy, so C logs `hops=0` and drops the relay as a dup — the relay worked and the log said it didn't). Fixed by adding a **tap-to-block** control to each peer chip: blocks writes to that node by label (not peripheral UUID, since BLE addresses rotate — §7) while leaving discovery alone, so the negative control is a fact you can point at instead of a distance you hope holds. `README.md` Day 3 is now split into **3a** (relay logic, desk test, software-blocked topology) and **3b** (relay across real distance, only after 3a passes).
+
+**3a re-run since the redesign: passed.** Confirmed working with the tap-to-block topology. **Granular detail not yet backfilled** — exact hop logs, which direction(s) were run, and explicit confirmation of the negative control (relay OFF → no delivery) still need recording here before this entry is on par with the rest of this log. Until that's filled in, treat "passed" as A's word, not yet as documented evidence. 3b (real distance) has not been attempted.
 
 ### Day 4 — Measurements
 Rough is fine; absent is not.
-- [ ] Range indoors through walls (m)
-- [ ] Range outdoors line of sight (m)
-- [ ] Discovery time — best and worst of ~10 tries
-- [ ] Battery: 1hr continuous scanning (%, note device model)
-- [ ] Battery: 1hr duty-cycled 10s on / 50s off — what we'll actually ship
-- [ ] Max payload that reliably writes in one go
+- [x] Range indoors through walls (m) — **no write-range boundary found within a home**, all test points inside <10m. RSSI -39 (near) to -94 (far corner, through wall+bathroom); writes incl. 512B probes mostly still succeeded at -94. The ~50 dB drop is wall attenuation, not distance. See `PHASE0_MESH_FINDINGS.md` §11.
+- [~] Range outdoors line of sight (m) — three informal, uncontrolled data points, none walked or marked to a known distance: ~40m pre-TX-HIGH-patch (§10, discovery intermittent, writes failing at status 133); ~100m on the TX-HIGH build as a Day 3 byproduct (§12, discovery persisted badly, writes never succeeded); ~50m on the TX-HIGH build from a dedicated two-phone write-range session (§13, RSSI correlated cleanly with write success across the run). Consistent picture: discovery range meaningfully exceeds write range outdoors. **Still needs a real walked/marked-distance Day 4 re-run.**
+- [~] Discovery time — best and worst of ~10 tries — 1 clean sample, 245ms (methodology: advertise on both phones first, confirm both show "advertising as X," *then* start scanning — an earlier 5.8s reading was human button-tapping lag, not radio latency, and was discarded). 9 more runs still needed for a real best/worst-of-10.
+- [ ] Battery: 1hr continuous scanning (%, note device model) — not started. Prerequisites worked out: airplane mode on then Bluetooth back on manually (isolates BLE from cellular/WiFi), screen off, disable OEM battery-killing for the app, unplugged, no Battery Saver. `adb shell dumpsys battery` before/after for exact %.
+- [ ] Battery: 1hr duty-cycled 10s on / 50s off — what we'll actually ship — not started; duty-cycling isn't implemented in the app yet, needs a `Timer.periodic`.
+- [x] Max payload that reliably writes in one go — **512B confirmed, repeatedly, both directions, even at RSSI -91.** Negotiated ATT MTU 517 (~514B hard ceiling). `CLAIM_SCHEMA.md`'s ≤400B assumption holds with headroom — **no fragmentation needed.**
 
 ### Day 5 — Write-up and the size question
-- [ ] `docs/PHASE0_MESH_FINDINGS.md`, one page
-- [ ] Recommendation: **is Wi-Fi Direct needed for MVP, or is BLE alone enough?**
-- [ ] **Take the max payload number to B before the sync.** The schema assumes ≤400 bytes fits in one write. If mine is lower, the schema changes — three-person conversation.
+- [~] `PHASE0_MESH_FINDINGS.md` — in progress, not a "one page" any more: 13 sections, real bugs found and fixed documented with root cause (advertisement-name hang, GATT client exhaustion, TX-power ceiling, missing write-path timeout), two range findings, one inconclusive relay attempt with root cause, one write-range session. Lives in `spike/phase0_ble_mesh/`, not shared `Docs/` — throwaway A-owned working material.
+- [ ] Recommendation: is Wi-Fi Direct needed for MVP, or is BLE alone enough? — not yet answered; 3a passing removes one blocker, but still needs 3b (relay at real distance) and a proper walked outdoor range figure.
+- [x] **Took the max payload number to the team.** 512B confirmed >> the 400B schema assumption. No fragmentation needed at current schema budget — this is now evidence, not an assumption.
 
-**Exit criteria:** I can answer with evidence — does multi-hop work, what's the real range and discovery time, what does scanning cost, how many bytes fit.
+**Exit criteria:** I can answer with evidence — does multi-hop work, what's the real range and discovery time, what does scanning cost, how many bytes fit. **3 of 4 fully answered. Multi-hop is partially answered: 3a (relay logic) passed, but without detailed evidence recorded yet, and 3b (relay at real distance) hasn't been attempted.**
 
-**Sync question that's mine to raise:** does measured payload capacity match what B's claims need to serialize? If not, we shrink the schema or build fragmentation. Fragmentation is a real feature with real failure modes (partial delivery, reassembly timeouts), not something to slip in quietly.
+**Sync question that's mine to raise:** does measured payload capacity match what B's claims need to serialize? **Answered — yes, with headroom.** 512B measured vs 400B budgeted.
 
 ---
 
@@ -297,6 +295,9 @@ Others may not catch these in review.
 - **Relaying never touches trust.** My layer hands claims to B's; it never sets `claimTrust` itself.
 - **No server, endpoint, or sync path.** A retry-until-connected loop means something's wrong — there's nothing to connect to.
 - **No directional relay.** BLE has no direction. Beacon gradient plus send ordering is the working replacement.
+- **A production `lib/mesh/` must never set the advertisement name on Android.** Doing so silently renames the whole phone system-wide and persistently — found the hard way in Phase 0 (`PHASE0_MESH_FINDINGS.md` §6). Node labels travel in manufacturer-specific data instead.
+- **BLE address is not stable device identity.** Android rotates it per advertising session (§7, observed twice more in §12/§13). `origin_device_id` must always come from the persistent Ed25519 keypair — now enforced in code: `DeviceKeyPair.deviceId` derives from the public key (`lib/identity/keypair.dart`).
+- **`msgId` is preserved across relay hops, minted fresh only at origination.** A new id per hop makes one flooded message look like N distinct messages to every downstream device — each stored and re-relayed. That is a self-inflicted broadcast storm, not a density problem.
 
 ---
 
@@ -315,10 +316,14 @@ Beyond the standard checks in `CLAUDE.md` §4.5:
 
 ## Progress log
 
-> **This table is missing Week 1.** The Phase 0 entries live on `a/ble-mesh-spike`, which has never been merged to `main` — so this copy, branched from `main`, still shows the blank template for Week 1. Reconcile the two before either merges; see the note under Week 1.
 
 | Date | Week/Day | Branch | What landed | Blocked on / notes |
 |---|---|---|---|---|
+| 2026-08-18 | Wk1 D1–2 | `a/ble-mesh-spike` | Spike scaffold, package decision (`bluetooth_low_energy` ^6.2.1), Flutter SDK + Android toolchain installed, two real bugs fixed (`respondWriteRequest` arg mismatch, `locationWhenInUse` wrongly requested on API 31+). Windows cross-drive Kotlin incremental-compiler bug worked around (`kotlin.incremental=false`). **Day 1–2 complete on real hardware:** both phones advertise, discover (245ms clean sample), write, receive both directions; de-dup cache confirmed. | Day 3 blocked on a third phone at this point. Day 4 mostly outstanding. |
+| 2026-08-19 | Wk1 D3–4 | `a/ble-mesh-spike` | Liveness heartbeat → later redesigned as advertisement-based (no connections). Three real bugs found and fixed on hardware: ping-vs-Send race crashing the plugin, silent Advertise/Scan failures with no try/catch, GATT client-registration exhaustion (`status=257`) at 3 phones (`PHASE0_MESH_FINDINGS.md` §8). Found and fixed the big one: `Advertisement(name:)` on Android silently renames the whole phone and can hang `startAdvertising()` forever if the adapter name doesn't change (§6) — misdiagnosed twice before finding the real cause. | Day 3 blocked differently: Motorola couldn't advertise at all until the §6 fix (unrelated to the name-hang root cause investigation — same underlying bug). |
+| 2026-08-20 | Wk1 D3 | `a/ble-mesh-spike` | First real three-phone Day 3 attempt. **Inconclusive:** middle phone (B) never had Scan on, so its peer list stayed empty and relay was a structural no-op regardless of the relay toggle — root cause was a gap in the Day 3 protocol itself, not a mesh/plugin bug (§12). Also recorded A-C separation (~100m outdoor) and a second BLE-address-rotation sighting. | Day 3 still not done — protocol gap fixed but needed a clean re-run. |
+| 2026-08-20 | Wk1 D4 | `a/ble-mesh-spike` | Outdoor write-range session, two phones, ~50m informal estimate. RSSI correlated cleanly with write success across the session (weak → `TIMED OUT`/status 133, strong → `OK`), confirming write range is meaningfully shorter than discovery range on the TX-HIGH build (§13). Reconfirmed the stale-peer-UUID artifact from §7. | Still not a controlled, walked/marked-distance measurement. |
+| 2026-08-20 | Wk1 D3 | `a/ble-mesh-spike` | **Redesigned the Day 3 test itself**, having concluded distance-based separation can't work: it can't guarantee no direct path, and worse, when both direct and relayed paths exist, de-dup hides a working relay (direct `hops=0` usually wins the race, so C never sees `hops=1` even if relay succeeded). Added tap-to-block on peer chips (blocks by node label, not peripheral UUID, since BLE addresses rotate), a write-quality hint next to RSSI (`write ok`/`write marginal`/`advert only`, thresholds from §13's own data), and split the README's Day 3 into 3a (relay logic, desk test) and 3b (relay across real range). `flutter analyze` clean, debug APK builds. | **Day 3 still the one open item** — needs a run with the new tooling. Not yet attempted. |
 | 2026-08-21 | Wk2 D1 | `ab/transport-data-wiring` | `Envelope` + CBOR round-trip per §9.1. Byte-identical round-trip for all 7 `kind` values; typed `EnvelopeDecodeResult` so malformed input never throws; `signingPayload()` excludes `hopLimit`/`msgId`. Real sizes measured for all 4 claim types. | Nothing. Sizes well under the 400B budget. |
 | 2026-08-21 | Wk2 D1 | `ab/transport-data-wiring` | Reviewed B's Phase 1 data layer across five rounds. Found a `Uint8Buffer`/sqflite bug that would have made **every** `insertClaim()` throw, `origin_sequence` being aliased to the Lamport clock, a `signalStrength` sentinel that promoted the weakest signal to the strongest weight, and signatures held in a Dart `String`. All fixed on `ab/`. | B's branch tip was pushed post-merge; cherry-picked onto `ab/`, which is now source of truth. |
 | 2026-08-21 | Wk2 D2 | `ab/transport-data-wiring` | Ed25519 sign/verify in `lib/identity/`, package `cryptography ^2.7.0`. `EnvelopeSigner.sign`/`.verify`; verify never throws. **Found and fixed a hole in §9.1**: no public key on the wire meant a relay could not verify a claim from a device it had never met. Added `originPubKey`. | `identity/` opened ahead of its Phase 4 assignment — B and C both need to be aware, per that folder's own reviewer rule. |
@@ -330,28 +335,29 @@ Beyond the standard checks in `CLAUDE.md` §4.5:
 - [ ] `SeenMessageCache.maxEntries` — provisional `2000`. Depends on real traffic rates nobody has measured. Deliberately generous: evicting too eagerly re-admits messages still in flight, which costs duplicate relays, not lost data.
 - [ ] Where does `matchesDeviceId()` get called? It needs the decoded `originDeviceId` from `body`, which is B's side of the boundary — so it belongs in the sink, not the pipeline. **Settle with B before Day 4.**
 - [ ] Who owns `identity/`? Opened early in Phase 2 because Day 2 needed signing. Officially Phase 4, unassigned. Secure key storage is explicitly *not* built — `loadOrCreateProvisional()` writes the seed to `SharedPreferences` in plaintext.
-- [ ] Is Wi-Fi Direct needed for MVP at all? — Phase 0, Wk1 D5
-- [ ] Broadcast storms at relief-camp density? — Wk5 D1
+- [ ] Is Wi-Fi Direct needed for MVP at all? — Phase 0, Wk1 D5. Not yet answered; 3a passing removes one blocker, still needs 3b and a proper walked outdoor range figure.
+- [ ] Broadcast storms at relief-camp density? — Wk5 D1. First small preview already seen at n=3 in Phase 0 (§8, GATT client exhaustion) — real evidence the failure mode exists, just not yet at scale.
 - [ ] Real clock-drift rate over 72h+ — first number Wk4 D4
 - [ ] Do we need fixed relay points? — Wk5 D5, my data decides
 - [ ] Android background BLE limits — how much relay survives backgrounding? Wk5 D3
-- [ ] `flutter_blue_plus` vs `flutter_reactive_ble` — decide Wk1 D1, note reason:
+- [ ] Which physical phone models were used in specific Phase 0 test sessions — several findings-doc entries (§2, §12, §13) still have unconfirmed device labels; fill these in before the Day 5 write-up is final.
+- [x] `flutter_blue_plus` vs `flutter_reactive_ble` — **neither.** Both are central-role only and cannot advertise. Decided: `bluetooth_low_energy` ^6.2.1, the only Dart option doing both BLE roles.
 
 ### Measurements (fill Wk1 D4–5, revise Wk5)
 
 | Measurement | Wk1 | Wk5 revised | Device / conditions |
 |---|---|---|---|
-| Range, indoors through walls | | | |
-| Range, outdoors line of sight | | | |
-| Discovery time (best / worst of 10) | | | |
-| Battery, 1hr continuous scan | | | |
-| Battery, 1hr duty-cycled 10s/50s | | | |
-| Max single-write payload | | | *(measured on `a/ble-mesh-spike`: 512B, MTU 517)* |
+| Range, indoors through walls | No write-range boundary found, <10m total distance; RSSI -39 to -94 | | 2 phones, TX-HIGH build, closed doors, one leg through wall+bathroom |
+| Range, outdoors line of sight | Discovery only, informal: ~40m (pre-patch), ~100m (TX-HIGH, badly). Write range, informal: ~50m (TX-HIGH) | | None walked/marked to a known distance yet — see `PHASE0_MESH_FINDINGS.md` §10, §12, §13 |
+| Discovery time (best / worst of 10) | 245ms (1 sample only) | | Same room, both phones already advertising before scan starts |
+| Battery, 1hr continuous scan | Not started | | |
+| Battery, 1hr duty-cycled 10s/50s | Not started — duty cycling not implemented yet | | |
+| Max single-write payload | **512B confirmed, both directions, even at RSSI -91** | | TX-HIGH build, negotiated ATT MTU 517 |
 | **Encoded envelope size, per claim type** | SOS 222B · SOS_PROXY 252B · HAZARD 227B · RESOURCE 232B | | Wk2 D2, after `originPubKey` added. Target ≤400B, ceiling 512B (§9.2) — comfortable headroom |
 | Delivery latency, 2 hops | | | |
 | Delivery latency, 3 hops | | | |
-| Max devices tested in one mesh | | | |
+| Max devices tested in one mesh | 3 (registration exhaustion hit at this count, §8) | | |
 | Clock drift over 24h | | | |
-| **Multi-hop relay works?** | | | |
-| **Wi-Fi Direct needed for MVP?** | | | |
-| **72-hour target achievable?** | | | |
+| **Multi-hop relay works?** | **Relay logic: yes (3a passed).** Detail not yet backfilled; 3b (relay at real distance) not attempted | | |
+| **Wi-Fi Direct needed for MVP?** | Not yet answered | | |
+| **72-hour target achievable?** | Not yet answered | | |
