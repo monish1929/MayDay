@@ -5,7 +5,7 @@
 This is the *data contract* — the exact shape of a Claim, the two identity rules, and the state machines that govern it. `CLAUDE.md` explains why these rules exist; this file is the reference for what to actually implement.
 
 Last changed by: A+B (Phase 2 pairing)
-Last changed on: 2026-08-21 — §1 gains `originSequence` (§10 always had the column; §1 had no field to fill it from) and types `originSignature` as bytes; §4 now states that the sequence counter and the logical clock are two separate counters. All three aware.
+Last changed on: 2026-08-21 — §1 gains `originSequence` (§10 always had the column; §1 had no field to fill it from) and types `originSignature` as bytes; §4 now states that the sequence counter and the logical clock are two separate counters; §9.1 gains `originPubKey` so a relay can verify a claim from a device it has never met. All three aware.
 
 ---
 
@@ -277,11 +277,14 @@ Envelope {
   kind       : uint8      // 0=claim 1=corroboration 2=resolution
                           // 3=vouch 4=revocation 5=volunteerBeacon 6=timeGossip
   body       : bytes      // CBOR, shape depends on kind
+  originPubKey : bytes(32) // Ed25519 public key of the originator
   originSig  : bytes(64)  // Ed25519 over (v || kind || body)
 }
 ```
 
 **The signature deliberately excludes `hopLimit` and `msgId`.** `hopLimit` changes at every hop — signing it would invalidate the signature after the first forward. This is why §5's "sign the immutable core" rule matters at the transport layer too.
+
+**`originPubKey` travels with every message so verification needs no prior contact.** A relay three hops out has never met the originator and there is no server to ask for a key, so a signature with no key beside it is unverifiable exactly where it matters most — the claims that travelled furthest. `originDeviceId` is a truncated hash of this key (see `identity/keypair.dart`), which also lets a receiver confirm the id inside `body` matches the key that actually signed; without that check a device could sign claims naming a neighbour, and for SOS mint ids in that neighbour's id space (§2).
 
 ### 9.2 Size budget
 

@@ -42,7 +42,14 @@ class DeviceKeyPair {
   /// claim, twice (`originDeviceId` and `logicalClock.deviceId`), against the
   /// 400-byte envelope budget (§9.2). Full 32-byte hex would cost ~64 bytes
   /// more per claim for collision resistance a local mesh does not need.
-  String get deviceId {
+  String get deviceId => deviceIdForPublicKey(publicKey);
+
+  /// Derives a device id from a raw public key.
+  ///
+  /// Static because a verifier holds the sender.s public key straight off
+  /// the wire and never their keypair -- this is how a relay checks that a
+  /// claimed `originDeviceId` matches the key that actually signed.
+  static String deviceIdForPublicKey(List<int> publicKey) {
     final digest = crypto.sha256.convert(publicKey).bytes;
     return _hex(digest.sublist(0, 16));
   }
