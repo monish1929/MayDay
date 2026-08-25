@@ -105,14 +105,14 @@ Also: `fromCbor()`/`decode()` return a typed `EnvelopeDecodeResult` and **never 
 
 **Found a real hole in §9.1 doing this.** The envelope defined `originSig` but carried no public key, and `originDeviceId` is a *truncated hash* of the key — not reversible. A relay three hops out has never met the originator and there is no server to ask, so the claims that travelled furthest were exactly the unverifiable ones. Fixed by carrying `originPubKey` (32 bytes) on the wire; every message is now self-verifying with no prior contact. **This changed §9.1 — a wire-format change, not just a type fix.**
 
-`EnvelopeSigner.matchesDeviceId()` closes the follow-on gap: a valid signature doesn't stop a device putting a *neighbour's* `originDeviceId` in the body, which for SOS would mint ids in that neighbour's id space (§2). **Not yet wired into the pipeline** — it needs the decoded body, which is B's side of the boundary. Agree with B where that check lives before Day 4.
+`EnvelopeSigner.matchesDeviceId()` closes the follow-on gap: a valid signature doesn't stop a device putting a *neighbour's* `originDeviceId` in the body, which for SOS would mint ids in that neighbour's id space (§2). **Now wired**, in `ClaimIngestion.ingest()` rather than the pipeline — it needs the decoded body, so it belongs on B's side of the seam. `MeshNode` additionally refuses to *relay* a claim rejected for `deviceIdMismatch` or `forgedClaimId`: forwarding a lie a signature cannot catch would make an honest device an amplifier for it.
 
 ### Day 3 — Receive pipeline in the correct order ✅
 Order is not arbitrary (`CLAIM_SCHEMA.md` §9.3):
 - [x] 1. De-dup — `msgId` in seen cache → drop silently, don't relay
 - [x] 2. Verify — invalid → drop, don't relay, **don't store**
 - [x] 3. Decrement `hopLimit` — at zero, store locally but don't relay
-- [~] 4. Store via B's layer, then relay per routing policy — pipeline calls an `EnvelopeSink` interface; **real wiring waits on B's `ingestClaim()`**, still open on their list. Routing policy is Day 5.
+- [x] 4. Store via B's layer, then relay per routing policy — wired end to end in `MeshNode`: pipeline → `ClaimIngestion` → `RelayQueue`. Frame handling is serialised, because the store-then-relay sequence must not interleave across frames.
 - [x] `seen_messages` cache with eviction — it can't grow forever
 - [x] Same message twice → stored once, relayed once
 
@@ -126,7 +126,15 @@ Two decisions here that are load-bearing, both tested directly:
 `hopLimit` hitting zero **still stores** — §1.1, a hop limit bounds how far a message travels, not whether the device holding it keeps a copy.
 
 ### Day 4 — Two-phone end-to-end, then three-way integration
-**Not started — needs two physical devices.** Everything above is software and testable on the host; this is the first Phase 2 item that genuinely cannot be. Emulator never counts for mesh code (§4.5). Real BLE transport still has to be wired to the pipeline, reusing Phase 0's proven GATT setup and its hardware lessons: never `Advertisement(name:)` on Android, explicit timeout on every native call, per-peer connection lock, `origin_device_id` from the keypair rather than the BLE address.
+**Code ready, hardware run still outstanding — needs two physical devices.** Emulator never counts for mesh code (§4.5).
+
+`BleMeshTransport` now exists in `lib/mesh/`, carrying Phase 0's proven GATT setup and all four hardware lessons: never `Advertisement(name:)` on Android, explicit timeout on every native call, per-peer connection lock, and BLE addresses treated as routing handles rather than identity. MTU is negotiated to 517 — the 23-byte default allows a 20-byte write, so every envelope would fail without it.
+
+The wiring above the radio is proven against a fake transport (`test/mesh/mesh_node_test.dart`, 11 tests) including the §6.2 two-SOS-one-bucket case across the wire. **That proves the wiring, not the hardware.** Everything below is still unticked because none of it has seen a radio.
+
+**Before the two-phone run, two things are needed that are not in this branch:**
+1. Android BLE permissions in the app manifest (`BLUETOOTH_SCAN` with `neverForLocation`, `BLUETOOTH_ADVERTISE`, `BLUETOOTH_CONNECT`, plus the `maxSdkVersion=30` legacy trio). The spike's manifest is the reference.
+2. An app that runs at all — `lib/main.dart` and the `android/` host live on `origin/c/app-shell`, not here. Day 4's last two items need C's UI regardless.
 
 - [ ] Claim created on phone 1 arrives in phone 2's store, intact and verified
 - [ ] Corroboration from a genuinely second physical device upgrades trust correctly
@@ -135,11 +143,11 @@ Two decisions here that are load-bearing, both tested directly:
 - [ ] Two SOS in the same geohash bucket → **two pins**, not one
 
 ### Day 5 — Routing policy v1
-- [ ] Full flood for `sos`, `sosProxy`, `hazardReport` — every device relays
-- [ ] Selective relay for `resource` — a stale resource pin is an inconvenience, not a life risk
-- [ ] `hopLimit` defaults per type, using Phase 0 range data
-- [ ] Relay queue with volunteer-first send ordering when several neighbours are available
-- [ ] Basic backpressure — what happens when the send queue outpaces the radio
+- [x] Full flood for `sos`, `sosProxy`, `hazardReport` — every device relays. `RoutingPolicy.decide()`; resolutions, vouches and revocations flood too.
+- [x] Selective relay for `resource` — the one droppable claim type. Availability is add-only and self-corrects, so a shed resource claim costs a stale count, not a life.
+- [~] `hopLimit` defaults per type — **PROVISIONAL, still an open question (CLAUDE.md §8).** Constants exist and the type *ordering* (SOS > hazard > resource) is a real decision, but the absolute numbers have nothing behind them: Phase 0 measured single-hop write range and never ran 3b, so nobody knows what one hop buys in the field. Needs a walked 3b run and a team call, not a routing-layer guess.
+- [x] Relay queue with volunteer-first send ordering when several neighbours are available — `RelayQueue.drain()` sorts volunteers first. Every peer is currently a non-volunteer until beaconing lands in Week 4, which degrades this to insertion order rather than breaking it.
+- [x] Basic backpressure — droppable traffic is capped and shed oldest-first; standard traffic has a generous cap. **SOS and resolutions have no cap and no eviction branch at all** (§1.1 — a queue cap is an eviction rule). Tested at `maxDroppable: 0, maxStandard: 0`: 50 SOS all survive.
 
 **Exit criteria:** two real phones exchanging signed claims, trust moving only for the right reasons, C's UI rendering claims that originated elsewhere.
 
@@ -328,12 +336,15 @@ Beyond the standard checks in `CLAUDE.md` §4.5:
 | 2026-08-21 | Wk2 D1 | `ab/transport-data-wiring` | Reviewed B's Phase 1 data layer across five rounds. Found a `Uint8Buffer`/sqflite bug that would have made **every** `insertClaim()` throw, `origin_sequence` being aliased to the Lamport clock, a `signalStrength` sentinel that promoted the weakest signal to the strongest weight, and signatures held in a Dart `String`. All fixed on `ab/`. | B's branch tip was pushed post-merge; cherry-picked onto `ab/`, which is now source of truth. |
 | 2026-08-21 | Wk2 D2 | `ab/transport-data-wiring` | Ed25519 sign/verify in `lib/identity/`, package `cryptography ^2.7.0`. `EnvelopeSigner.sign`/`.verify`; verify never throws. **Found and fixed a hole in §9.1**: no public key on the wire meant a relay could not verify a claim from a device it had never met. Added `originPubKey`. | `identity/` opened ahead of its Phase 4 assignment — B and C both need to be aware, per that folder's own reviewer rule. |
 | 2026-08-21 | Wk2 D3 | `ab/transport-data-wiring` | Receive pipeline in exact §9.3 order + persisted `SeenMessageCache` with eviction. Relay preserves `msgId`; rejected envelopes are not recorded as seen. 96/96 tests green, `flutter analyze` clean. | Store step goes through an `EnvelopeSink` interface — **real wiring waits on B's `ingestClaim()`**. |
+| 2026-08-25 | Wk2 D5 | `ab/transport-data-wiring` | **Day 5 routing policy.** `RoutingPolicy` (full flood for sos/sosProxy/hazard/resolution/vouch/revocation, selective for resource, time gossip never relayed) and `RelayQueue` (volunteer-first drain, backpressure). SOS and resolutions sit in a priority class with no cap and no eviction branch — §1.1 means a queue cap is an eviction rule. 18 new tests. | `hopLimit` defaults still provisional; 3b never ran, so nobody knows what one hop buys. |
+| 2026-08-25 | Wk2 D4 | `ab/transport-data-wiring` | **Day 4 code, not Day 4 evidence.** `MeshTransport` seam + `MeshNode` joining radio → pipeline → ingestion → relay queue, and `BleMeshTransport` porting Phase 0's GATT setup with all four hardware lessons. New rule: a claim rejected for `deviceIdMismatch`/`forgedClaimId` is not relayed — an honest device must not amplify a lie the signature cannot catch. 137/137 tests green, `flutter analyze` clean. | **Nothing here has touched a radio.** Needs two phones, manifest permissions, and C's app shell (`origin/c/app-shell`) before the Day 4 boxes can be ticked. |
 
 ### Open questions I'm carrying
 
 - [ ] `hopLimit` default per message type — **TBD pending Phase 0 range data.** Don't let anyone pick a number before that lands. **A provisional `10` is now in `ClaimFactory.provisionalHopLimit`** — named, not inlined, so the real value is a one-line change. Still a placeholder, not a decision.
+- [ ] **Two provisional hop limits now exist, in two folders.** `ClaimFactory.provisionalHopLimit = 10` stamps the stored `Claim.hopLimit` (B's `data/`); `RoutingPolicy.initialHopLimitFor()` stamps the envelope at transmission (my `mesh/`) with 8/5/3 by type. The wire value governs propagation, so nothing is broken today — but a locally raised SOS is stored saying 10 and sent saying 8, and that is exactly the kind of quiet disagreement §7 warns about. **Do not fix by editing across folders unilaterally** — routing is mine, the stored field is B's, and per-type vs single-value is a schema question. Settle with B, and note that a per-type answer touches `CLAIM_SCHEMA.md`.
 - [ ] `SeenMessageCache.maxEntries` — provisional `2000`. Depends on real traffic rates nobody has measured. Deliberately generous: evicting too eagerly re-admits messages still in flight, which costs duplicate relays, not lost data.
-- [ ] Where does `matchesDeviceId()` get called? It needs the decoded `originDeviceId` from `body`, which is B's side of the boundary — so it belongs in the sink, not the pipeline. **Settle with B before Day 4.**
+- [x] Where does `matchesDeviceId()` get called? **Settled: in `ClaimIngestion.ingest()`**, the sink, not the pipeline — it needs the decoded body. `MeshNode` also suppresses relay when ingestion rejects for that reason.
 - [ ] Who owns `identity/`? Opened early in Phase 2 because Day 2 needed signing. Officially Phase 4, unassigned. Secure key storage is explicitly *not* built — `loadOrCreateProvisional()` writes the seed to `SharedPreferences` in plaintext.
 - [ ] Is Wi-Fi Direct needed for MVP at all? — Phase 0, Wk1 D5. Not yet answered; 3a passing removes one blocker, still needs 3b and a proper walked outdoor range figure.
 - [ ] Broadcast storms at relief-camp density? — Wk5 D1. First small preview already seen at n=3 in Phase 0 (§8, GATT client exhaustion) — real evidence the failure mode exists, just not yet at scale.
