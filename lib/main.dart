@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:mayday/mesh/mesh_bootstrap.dart';
 import 'package:mayday/ui/router.dart';
 import 'package:mayday/ui/theme/app_theme.dart';
 
@@ -11,7 +12,15 @@ import 'package:mayday/ui/theme/app_theme.dart';
 /// banner, no retry spinner, no cloud icons. The app has one mode.
 /// — PERSON_C.md §6.
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
   runApp(const MayDayApp());
+
+  // The mesh comes up alongside the UI, not before it. Starting the radio
+  // involves a permission prompt and a GATT server, and neither is a reason to
+  // hold back the map: a phone with Bluetooth off, or a user who declines the
+  // prompt, still gets a working offline map and its own local claims.
+  // Deliberately not awaited — nothing on this path may delay first paint.
+  MeshBootstrap.start();
 }
 
 class MayDayApp extends StatelessWidget {
