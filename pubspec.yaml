@@ -45,6 +45,22 @@ dependencies:
   # sign and mesh/ can verify in the same unit tests, no device required.
   cryptography: ^2.7.0
 
+  # BLE transport (§9). Chosen in Phase 0 and proven on hardware: a mesh node
+  # is peripheral AND central at once, and this is the only Dart package that
+  # does both roles including a GATT server with write callbacks.
+  # flutter_blue_plus and flutter_reactive_ble are central-only; they cannot
+  # advertise. See Docs/PERSON_A.md §9.
+  #
+  # NOT carried over from the spike: the vendored dependency_override that
+  # sets Android advertising TX power to HIGH. That override is what the
+  # outdoor range figures were measured on, so adopting or dropping it changes
+  # what those numbers mean — the spike pubspec flags it as needing a
+  # deliberate decision, and it is not one mesh/ makes on its own.
+  bluetooth_low_energy: ^6.2.1
+
+  # Runtime prompts for the Android 12+ BLE permissions.
+  permission_handler: ^11.3.1
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

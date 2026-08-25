@@ -1,0 +1,233 @@
+// lib/mesh/ble_mesh_transport.dart
+
+import 'dart:async';
+import 'dart:typed_data';
+
+import 'package:bluetooth_low_energy/bluetooth_low_energy.dart';
+
+import 'mesh_transport.dart';
+import 'relay_queue.dart';
+
+/// The service every MayDay node advertises and scans for. Fixed and
+/// identical on every device — it is how a node recognises another node.
+final UUID kMayDayServiceUuid =
+    UUID.fromString('6d61790d-0001-4d65-9368-000000000001');
+
+/// The one writable characteristic. One envelope is one write to this.
+final UUID kEnvelopeCharUuid =
+    UUID.fromString('6d61790d-0002-4d65-9368-000000000002');
+
+/// Real BLE transport — the Phase 0 spike's proven GATT setup, moved into
+/// production code.
+///
+/// Every node runs both roles at once: peripheral, so neighbours can find it
+/// and write to it, and central, so it can find and write to them. That dual
+/// role is what makes this a mesh rather than a hub, and it is why the
+/// package choice was forced (Docs/PERSON_A.md §9).
+///
+/// **This class cannot be unit tested.** CLAUDE.md §6.1 is explicit that mesh
+/// code needs two physical devices and that an emulator does not count. The
+/// logic above it is tested against a fake [MeshTransport]; what lives here is
+/// exactly the part that has to be proven on hardware.
+class BleMeshTransport implements MeshTransport {
+  /// Every native call is wrapped in this.
+  ///
+  /// Not decoration — confirmed at the edge of range in Phase 0: `connect()`
+  /// can hang for 30+ seconds rather than failing fast, silently blocking
+  /// every later send to that peer for the whole hang. A native BLE call that
+  /// never returns must not be able to wedge the node.
+  static const Duration callTimeout = Duration(seconds: 8);
+
+  /// Shorter, because these run at startup and a hang here means the node
+  /// never comes up at all.
+  static const Duration setupTimeout = Duration(seconds: 5);
+
+  /// Phase 0 measured 512-byte writes succeeding repeatedly at a negotiated
+  /// ATT MTU of 517, against an envelope budget of 400 bytes. The default MTU
+  /// is 23, which allows a 20-byte write — every envelope would fail without
+  /// this negotiation.
+  static const int desiredMtu = 517;
+
+  final CentralManager _central;
+  final PeripheralManager _peripheral;
+
+  final _inbound = StreamController<InboundFrame>.broadcast();
+  final Map<String, Peripheral> _peers = {};
+
+  /// Peers with a write already in flight.
+  ///
+  /// Phase 0: two overlapping `connect()` calls to the same peer destabilised
+  /// the plugin on real hardware. A second write to a busy peer is skipped
+  /// rather than queued — the relay queue still holds the message, so the
+  /// next drain retries it.
+  final Set<String> _busyPeers = {};
+
+  final List<StreamSubscription<dynamic>> _subscriptions = [];
+
+  bool _started = false;
+
+  BleMeshTransport({CentralManager? central, PeripheralManager? peripheral})
+      : _central = central ?? CentralManager(),
+        _peripheral = peripheral ?? PeripheralManager();
+
+  @override
+  Stream<InboundFrame> get inbound => _inbound.stream;
+
+  /// Currently discovered neighbours.
+  ///
+  /// `peerId` is the BLE peripheral uuid, which Android rotates for privacy.
+  /// It is a routing handle and **nothing else** — never an identity. Who sent
+  /// a claim is settled by the Ed25519 key inside the envelope, never by the
+  /// address it arrived from (CLAUDE.md §2.5).
+  @override
+  List<RelayTarget> get peers => _peers.keys
+      .map((id) => RelayTarget(peerId: id))
+      .toList(growable: false);
+
+  @override
+  Future<void> start() async {
+    if (_started) return;
+    _started = true;
+
+    _subscriptions.add(
+      _peripheral.characteristicWriteRequested.listen(_onWriteRequested),
+    );
+    _subscriptions.add(_central.discovered.listen(_onDiscovered));
+
+    await _startAdvertising();
+    await _central
+        .startDiscovery(serviceUUIDs: [kMayDayServiceUuid])
+        .timeout(setupTimeout);
+  }
+
+  Future<void> _startAdvertising() async {
+    final characteristic = GATTCharacteristic.mutable(
+      uuid: kEnvelopeCharUuid,
+      properties: [
+        GATTCharacteristicProperty.write,
+        GATTCharacteristicProperty.writeWithoutResponse,
+      ],
+      permissions: [GATTCharacteristicPermission.write],
+      descriptors: [],
+    );
+
+    await _peripheral.removeAllServices().timeout(setupTimeout);
+    await _peripheral
+        .addService(GATTService(
+          uuid: kMayDayServiceUuid,
+          isPrimary: true,
+          includedServices: [],
+          characteristics: [characteristic],
+        ))
+        .timeout(setupTimeout);
+
+    // DELIBERATELY no `name:` on this Advertisement.
+    //
+    // On Android that path calls BluetoothAdapter.setName(), which renames the
+    // WHOLE PHONE's Bluetooth name — system-wide and persistently — then waits
+    // for an ACTION_LOCAL_NAME_CHANGED broadcast to complete its Future. If the
+    // adapter name already equals the requested name, Android fires no
+    // broadcast, the Future never completes, and startAdvertising hangs
+    // forever with no error. That cost most of a day in Phase 0
+    // (PHASE0_MESH_FINDINGS.md §6). We need no name anyway: identity travels
+    // inside the signed envelope.
+    await _peripheral
+        .startAdvertising(Advertisement(serviceUUIDs: [kMayDayServiceUuid]))
+        .timeout(setupTimeout);
+  }
+
+  void _onDiscovered(DiscoveredEventArgs args) {
+    _peers[args.peripheral.uuid.toString()] = args.peripheral;
+  }
+
+  void _onWriteRequested(GATTCharacteristicWriteRequestedEventArgs args) {
+    // Respond first. A central that is never answered blocks waiting for its
+    // write to complete, and the node stops being able to accept anything
+    // else from it.
+    unawaited(_peripheral.respondWriteRequest(args.request));
+
+    // Handed on exactly as received. This is untrusted input from a stranger's
+    // phone; nothing here inspects, trusts, or repairs it. The receive
+    // pipeline decides its fate (CLAIM_SCHEMA.md §9.3).
+    _inbound.add(InboundFrame(
+      from: RelayTarget(peerId: args.central.uuid.toString()),
+      bytes: Uint8List.fromList(args.request.value),
+    ));
+  }
+
+  @override
+  Future<bool> send(RelayTarget target, Uint8List bytes) async {
+    final peer = _peers[target.peerId];
+    if (peer == null) return false;
+
+    if (_busyPeers.contains(target.peerId)) {
+      // Skipped, not queued — see _busyPeers. The relay queue still holds it.
+      return false;
+    }
+    _busyPeers.add(target.peerId);
+
+    try {
+      await _writeOnce(peer, bytes).timeout(callTimeout);
+      return true;
+    } catch (_) {
+      // Every failure mode is the same to the caller: a neighbour walked out
+      // of range, the adapter refused, the write timed out. None of them are
+      // exceptional on this transport, and none may propagate — an uncaught
+      // throw on the send path takes the node down while an SOS is in the
+      // queue behind it.
+      return false;
+    } finally {
+      _busyPeers.remove(target.peerId);
+    }
+  }
+
+  Future<void> _writeOnce(Peripheral peer, Uint8List bytes) async {
+    await _central.connect(peer);
+    await _central.requestMTU(peer, mtu: desiredMtu);
+
+    final services = await _central.discoverGATT(peer);
+    final characteristic = services
+        .firstWhere((s) => s.uuid == kMayDayServiceUuid)
+        .characteristics
+        .firstWhere((c) => c.uuid == kEnvelopeCharUuid);
+
+    await _central.writeCharacteristic(
+      peer,
+      characteristic,
+      value: bytes,
+      // With response: we want the failure, not a silent drop. A write that
+      // vanished looks identical to a delivered one otherwise, and at the
+      // range edge that is exactly the distinction that matters.
+      type: GATTCharacteristicWriteType.withResponse,
+    );
+  }
+
+  @override
+  Future<void> stop() async {
+    if (!_started) return;
+    _started = false;
+
+    for (final subscription in _subscriptions) {
+      await subscription.cancel();
+    }
+    _subscriptions.clear();
+
+    // Each guarded separately: a failure stopping one must not leave the other
+    // running. A node that stopped advertising but kept scanning is a battery
+    // drain nobody can see.
+    try {
+      await _central.stopDiscovery().timeout(setupTimeout);
+    } catch (_) {
+      // Already stopped, or the adapter is gone. Nothing to recover.
+    }
+    try {
+      await _peripheral.stopAdvertising().timeout(setupTimeout);
+    } catch (_) {
+      // As above.
+    }
+
+    _peers.clear();
+    _busyPeers.clear();
+    await _inbound.close();
+  }
+}
