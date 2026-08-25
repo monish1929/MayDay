@@ -1,8 +1,8 @@
 // lib/mesh/mesh_bootstrap.dart
 
 import 'dart:async';
-import 'dart:developer' as developer;
 
+import 'package:flutter/foundation.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import '../data/database/claim_repository.dart';
@@ -90,8 +90,15 @@ class MeshBootstrap {
   /// [transport] is injectable so a harness can drive the whole stack without
   /// a radio; leave it null for the real BLE transport.
   static Future<MeshStartResult> start({MeshTransport? transport}) async {
+    _log('starting');
+
     final denied = await _requestPermissions();
     if (denied.isNotEmpty) {
+      // Logged, not swallowed. An earlier version returned this result to a
+      // caller that ignored it, so a mesh that never came up was completely
+      // invisible — the app looked healthy and simply had no radio. On a
+      // phone with no console, an unlogged failure is an undiagnosable one.
+      _log('NOT STARTED: permissions denied: ${denied.join(', ')}');
       return MeshStartResult.failed(
         MeshStartFailure.permissionsDenied,
         denied: denied,
@@ -118,28 +125,38 @@ class MeshBootstrap {
 
     try {
       await node.start();
-    } catch (_) {
-      // Bluetooth off, adapter wedged, GATT server refused. All recoverable by
-      // the user, none of them a reason to take the app down — the map and the
-      // local store still work with no radio at all.
+    } catch (e) {
+      // Bluetooth off, adapter wedged, GATT server refused, authorization
+      // declined. All recoverable by the user, none of them a reason to take
+      // the app down — the map and the local store still work with no radio at
+      // all. The reason is printed because "the radio did not come up" is not
+      // an actionable message; "authorization refused" is.
+      _log('NOT STARTED: radio unavailable: $e');
       return const MeshStartResult.failed(MeshStartFailure.radioUnavailable);
     }
 
     MeshBootstrap.node = node;
+    _log('started as device ${keyPair.deviceId}');
+
     Timer.periodic(flushInterval, (_) async {
       final sent = await node.flush();
-      // Logged every tick, including the quiet ones. On a phone with no
+      // Printed every tick, including the quiet ones. On a phone with no
       // console, "nothing is arriving" and "everything is arriving and being
       // rejected" look identical from the map — the counters are the only way
       // to tell them apart during the two-phone run. Read with:
-      //   adb logcat -s flutter | grep mayday.mesh
-      developer.log(
-        'peers=${node.transport.peers.length} sent=$sent ${node.stats}',
-        name: 'mayday.mesh',
-      );
+      //   adb logcat -s flutter
+      _log('peers=${node.transport.peers.length} sent=$sent ${node.stats}');
     });
     return MeshStartResult.started(node);
   }
+
+  /// Deliberately `debugPrint` rather than `dart:developer`'s `log`.
+  ///
+  /// `developer.log` goes to the VM service and does **not** reach `adb
+  /// logcat`, which made the first Day 4 bring-up attempt look like total
+  /// silence. Anything meant to be read off a phone in the field has to go
+  /// through print.
+  static void _log(String message) => debugPrint('[mayday.mesh] $message');
 
   static Future<List<Permission>> _requestPermissions() async {
     final statuses = await requiredPermissions.request();

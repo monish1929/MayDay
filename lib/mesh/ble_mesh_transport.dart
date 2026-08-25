@@ -1,9 +1,9 @@
 // lib/mesh/ble_mesh_transport.dart
 
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:bluetooth_low_energy/bluetooth_low_energy.dart';
+import 'package:flutter/foundation.dart';
 
 import 'mesh_transport.dart';
 import 'relay_queue.dart';
@@ -41,6 +41,19 @@ class BleMeshTransport implements MeshTransport {
   /// Shorter, because these run at startup and a hang here means the node
   /// never comes up at all.
   static const Duration setupTimeout = Duration(seconds: 5);
+
+  /// Authorization is the one call that legitimately waits on a **person**.
+  ///
+  /// `authorize()` can raise a system permission dialog, and [setupTimeout]
+  /// applied to it meant the Future was abandoned five seconds in — long
+  /// before anyone could read the prompt, let alone tap it. The mesh then
+  /// reported "radio unavailable" on a phone whose radio was fine and whose
+  /// user was still deciding.
+  ///
+  /// Generous rather than absent: a wedged adapter must still fail eventually
+  /// rather than leave the node half-started forever. The rule is that a
+  /// timeout bounds a hung *native call*, never a human's reaction time.
+  static const Duration authorizeTimeout = Duration(minutes: 2);
 
   /// Phase 0 measured 512-byte writes succeeding repeatedly at a negotiated
   /// ATT MTU of 517, against an envelope budget of 400 bytes. The default MTU
@@ -89,15 +102,87 @@ class BleMeshTransport implements MeshTransport {
     if (_started) return;
     _started = true;
 
+    // Both managers must be authorized before ANY radio call.
+    //
+    // Without this, `addService()` and `startAdvertising()` never complete and
+    // never throw — the node looks like it started, logs nothing, and simply
+    // does not exist on the air. Found on hardware during Day 4 bring-up: the
+    // GATT server registered, then silence. The Phase 0 spike had these two
+    // lines and they were the one thing not carried across.
+    await _ensureAuthorized(_central, 'central');
+    await _ensureAuthorized(_peripheral, 'peripheral');
+    debugPrint('[mayday.mesh] authorized, adding GATT service...');
+
     _subscriptions.add(
       _peripheral.characteristicWriteRequested.listen(_onWriteRequested),
     );
     _subscriptions.add(_central.discovered.listen(_onDiscovered));
 
     await _startAdvertising();
+    debugPrint('[mayday.mesh] advertising, starting discovery...');
     await _central
         .startDiscovery(serviceUUIDs: [kMayDayServiceUuid])
         .timeout(setupTimeout);
+    debugPrint('[mayday.mesh] discovery started');
+  }
+
+  /// Gets a manager into [BluetoothLowEnergyState.poweredOn], asking the user
+  /// only if it is actually needed.
+  ///
+  /// **Do not "simplify" this back to an unconditional `authorize()`.** That
+  /// call is `ActivityCompat.requestPermissions()` plus a stored callback which
+  /// only fires from `onRequestPermissionsResult`. When the permissions are
+  /// already granted — which they are, because MeshBootstrap asks for them
+  /// through permission_handler first — Android shows no dialog, delivers no
+  /// result to this plugin's listener, and the returned Future never completes.
+  /// The node then hangs on startup with the radio in perfect working order.
+  /// Cost a bring-up cycle on hardware to find; the symptom is a log that stops
+  /// dead at "authorizing central...".
+  ///
+  /// Checking `state` avoids the request entirely in the normal case: it reads
+  /// `checkSelfPermission` directly and reports [BluetoothLowEnergyState
+  /// .unauthorized] only when a permission really is missing — which is exactly
+  /// when a dialog will genuinely appear and a human genuinely has to answer.
+  Future<void> _ensureAuthorized(
+    BluetoothLowEnergyManager manager,
+    String label,
+  ) async {
+    // The plugin reports `unknown` until the native side has attached. Poll
+    // briefly rather than acting on a state that has not been determined yet.
+    final deadline = DateTime.now().add(setupTimeout);
+    while (manager.state == BluetoothLowEnergyState.unknown &&
+        DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+
+    debugPrint('[mayday.mesh] $label state=${manager.state.name}');
+
+    switch (manager.state) {
+      case BluetoothLowEnergyState.poweredOn:
+        return;
+
+      case BluetoothLowEnergyState.unauthorized:
+        // A permission really is missing, so this will raise a dialog and wait
+        // on a person — hence the long timeout.
+        debugPrint('[mayday.mesh] $label unauthorized, prompting...');
+        if (!await manager.authorize().timeout(authorizeTimeout)) {
+          throw StateError('$label manager: authorization declined');
+        }
+        return;
+
+      // Named rather than lumped into a generic failure: "Bluetooth is off" is
+      // something the user can fix in two taps, and telling them that is the
+      // whole difference between a dead app and a recoverable one.
+      case BluetoothLowEnergyState.poweredOff:
+        throw StateError('$label manager: Bluetooth is turned off');
+
+      case BluetoothLowEnergyState.unsupported:
+        throw StateError('$label manager: BLE not supported on this device');
+
+      case BluetoothLowEnergyState.unknown:
+        throw StateError('$label manager: state still unknown after '
+            '${setupTimeout.inSeconds}s');
+    }
   }
 
   Future<void> _startAdvertising() async {
