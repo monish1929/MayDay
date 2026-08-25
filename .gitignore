@@ -1,4 +1,4 @@
-﻿# Miscellaneous
+# Miscellaneous
 *.class
 *.log
 *.pyc
@@ -43,11 +43,3 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
-
-# Explicit exclusions for remaining Android artifacts
-/android/
-android/gradlew
-android/gradlew.bat
-android/gradle/wrapper/gradle-wrapper.jar
-android/local.properties
-android/app/src/main/java/io/flutter/plugins/GeneratedPluginRegistrant.java

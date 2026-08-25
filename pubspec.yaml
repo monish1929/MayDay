@@ -61,6 +61,20 @@ dependencies:
   # Runtime prompts for the Android 12+ BLE permissions.
   permission_handler: ^11.3.1
 
+  # --- ui/ (C) ---
+  # Offline vector map. Tiles are read from a bundled .mbtiles and served over
+  # loopback, so nothing here reaches the network (CLAUDE.md §1.2).
+  maplibre_gl: ^0.26.2
+
+  # QR scanning for the signed rescue-resolution handshake (§9.3).
+  mobile_scanner: ^7.4.0
+
+  # Reads the bundled .mbtiles archive for the local tile server. Distinct
+  # from `sqflite` above, which is the claim store — same underlying engine,
+  # two unrelated jobs, deliberately not shared.
+  sqlite3: ^2.4.1
+  sqlite3_flutter_libs: ^0.5.24
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -85,6 +99,10 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+
+  assets:
+    - assets/tiles/placeholder.mbtiles
+    - assets/map_style.json
 
   # To add assets to your application, add an assets section, like this:
   # assets:

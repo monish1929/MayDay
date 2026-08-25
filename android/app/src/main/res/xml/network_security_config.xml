@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!--
+      MayDay Offline Disaster Response — CLAUDE.md §1.
+      Cleartext HTTP is permitted ONLY for local loopback (127.0.0.1 / localhost)
+      so the internal local tile server can communicate with MapLibre Native.
+      All external cleartext traffic remains blocked.
+    -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">127.0.0.1</domain>
+        <domain includeSubdomains="true">localhost</domain>
+    </domain-config>
+</network-security-config>
