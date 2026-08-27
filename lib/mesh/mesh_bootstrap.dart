@@ -10,6 +10,7 @@ import '../data/time/device_clock.dart';
 import '../identity/keypair.dart';
 import 'ble_mesh_transport.dart';
 import 'claim_ingestion.dart';
+import 'debug_sos_trigger.dart';
 import 'mesh_node.dart';
 import 'mesh_transport.dart';
 
@@ -137,6 +138,13 @@ class MeshBootstrap {
 
     MeshBootstrap.node = node;
     _log('started as device ${keyPair.deviceId}');
+
+    // Bring-up only, and compile-time gated — see DebugSosTrigger. Delayed so
+    // the radio has had a chance to find a neighbour first; a claim raised
+    // into an empty peer list just sits in the queue until the next flush.
+    if (DebugSosTrigger.enabled) {
+      Timer(const Duration(seconds: 12), () => DebugSosTrigger.raise(node));
+    }
 
     Timer.periodic(flushInterval, (_) async {
       final sent = await node.flush();
