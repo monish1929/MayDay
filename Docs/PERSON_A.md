@@ -136,11 +136,17 @@ The wiring above the radio is proven against a fake transport (`test/mesh/mesh_n
 1. Android BLE permissions in the app manifest (`BLUETOOTH_SCAN` with `neverForLocation`, `BLUETOOTH_ADVERTISE`, `BLUETOOTH_CONNECT`, plus the `maxSdkVersion=30` legacy trio). The spike's manifest is the reference.
 2. An app that runs at all — `lib/main.dart` and the `android/` host live on `origin/c/app-shell`, not here. Day 4's last two items need C's UI regardless.
 
-- [ ] Claim created on phone 1 arrives in phone 2's store, intact and verified
-- [ ] Corroboration from a genuinely second physical device upgrades trust correctly
-- [ ] **Relaying between two phones does NOT move trust** — verify on real hardware, not just B's harness
-- [ ] Join C: a claim raised on phone 1 renders on phone 2's map
-- [ ] Two SOS in the same geohash bucket → **two pins**, not one
+- [x] Claim created on phone 1 arrives in phone 2's store, intact and verified — **PASSED.** Claim `3cb7b2c0…` originated on the Motorola (`a5f0f503…`, seq 1) and is present in the Xiaomi's `claims` table with identical id, origin device id and sequence, `badsig=0`. Verified by pulling both SQLite stores off the devices, not by reading the log.
+- [ ] Corroboration from a genuinely second physical device upgrades trust correctly — **not attempted.** Needs an explicit-attestation path; nothing raises one yet.
+- [x] **Relaying between two phones does NOT move trust** — **PASSED on hardware.** The Xiaomi received that claim, relayed it (`relayed=1`), and its stored copy is still `claim_trust=0` (unconfirmed). §2.2 holds across a real radio, not just in B's harness.
+- [ ] Join C: a claim raised on phone 1 renders on phone 2's map — **blocked on C.** The map reads `mock_data.dart`; the mock→real swap is PERSON_C.md Wk2 D1, unstarted.
+- [x] Two SOS in the same geohash bucket → **two records** — **PASSED, and this is the §6.2 case.** The Xiaomi raised two SOS at identical coordinates (one bucket) across two launches: ids `fe813f67…` (seq 1) and `1e80f07a…` (seq 2), completely distinct. With the Motorola's, that is **three distinct SOS records in one geohash bucket**. Under a shared id rule they would have collapsed into one and resolving one would have erased the others. The pin half of this item is C's.
+
+**Also confirmed on device:** `display_lifetime_ms` is **NULL** on every SOS row (§2.3 — not a large number, actually null), and `hop_limit=8` on the wire, i.e. `RoutingPolicy`'s per-type value rather than `ClaimFactory.provisionalHopLimit=10`. That settles which of the two provisional hop limits actually governs propagation — the open question below is about the disagreement, not about behaviour.
+
+**Three bugs found, all only findable on hardware** (see the fix commit): the plugin's managers were never authorized, so `addService`/`startAdvertising` silently never completed; every failure path returned in silence because `main.dart` discards the result; and `dart:developer`'s `log()` never reaches `adb logcat`. A fourth — a 5s timeout applied to a call that raises a permission dialog and waits on a human.
+
+**Still open: delivery was one-directional in the first run.** The Motorola never received the Xiaomi's claims (`rx=1 dup=1 stored=0` — the one envelope it saw was its own, relayed back, correctly dropped by de-dup). Probable cause found and fixed: `_peers` had no eviction, so rotated BLE addresses accumulated (`peers=2` with two phones in the room) and the relay queue drained onto dead handles. Re-test after the eviction fix.
 
 ### Day 5 — Routing policy v1
 - [x] Full flood for `sos`, `sosProxy`, `hazardReport` — every device relays. `RoutingPolicy.decide()`; resolutions, vouches and revocations flood too.

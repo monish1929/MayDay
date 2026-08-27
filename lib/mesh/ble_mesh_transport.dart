@@ -64,8 +64,26 @@ class BleMeshTransport implements MeshTransport {
   final CentralManager _central;
   final PeripheralManager _peripheral;
 
+  /// How long a neighbour stays in [peers] after its last advertisement.
+  ///
+  /// Android rotates BLE peripheral addresses for privacy, so a phone that
+  /// never moved reappears under a new id and the old one is dead forever
+  /// (PERSON_A.md §7 recorded this from Phase 0). Without eviction the peer
+  /// list only grows, and the relay queue drains onto handles that cannot be
+  /// written to — which is exactly how a claim goes missing while the log
+  /// cheerfully reports more peers than there are phones in the room.
+  ///
+  /// Generous next to the spike's 4s liveness chip: that drove a UI colour,
+  /// this decides whether we still try to deliver an SOS. Dropping a
+  /// reachable neighbour costs a delivery; keeping a dead one costs one
+  /// failed write.
+  static const Duration peerStaleAfter = Duration(seconds: 30);
+
   final _inbound = StreamController<InboundFrame>.broadcast();
   final Map<String, Peripheral> _peers = {};
+
+  /// Last time each peer was heard advertising.
+  final Map<String, DateTime> _peerLastSeen = {};
 
   /// Peers with a write already in flight.
   ///
@@ -93,9 +111,22 @@ class BleMeshTransport implements MeshTransport {
   /// a claim is settled by the Ed25519 key inside the envelope, never by the
   /// address it arrived from (CLAUDE.md §2.5).
   @override
-  List<RelayTarget> get peers => _peers.keys
-      .map((id) => RelayTarget(peerId: id))
-      .toList(growable: false);
+  List<RelayTarget> get peers {
+    _evictStalePeers();
+    return _peers.keys
+        .map((id) => RelayTarget(peerId: id))
+        .toList(growable: false);
+  }
+
+  void _evictStalePeers() {
+    final cutoff = DateTime.now().subtract(peerStaleAfter);
+    _peerLastSeen.removeWhere((id, seen) {
+      if (seen.isAfter(cutoff)) return false;
+      _peers.remove(id);
+      _busyPeers.remove(id);
+      return true;
+    });
+  }
 
   @override
   Future<void> start() async {
@@ -222,7 +253,9 @@ class BleMeshTransport implements MeshTransport {
   }
 
   void _onDiscovered(DiscoveredEventArgs args) {
-    _peers[args.peripheral.uuid.toString()] = args.peripheral;
+    final id = args.peripheral.uuid.toString();
+    _peers[id] = args.peripheral;
+    _peerLastSeen[id] = DateTime.now();
   }
 
   void _onWriteRequested(GATTCharacteristicWriteRequestedEventArgs args) {
@@ -254,12 +287,19 @@ class BleMeshTransport implements MeshTransport {
     try {
       await _writeOnce(peer, bytes).timeout(callTimeout);
       return true;
-    } catch (_) {
+    } catch (e) {
       // Every failure mode is the same to the caller: a neighbour walked out
       // of range, the adapter refused, the write timed out. None of them are
       // exceptional on this transport, and none may propagate — an uncaught
       // throw on the send path takes the node down while an SOS is in the
       // queue behind it.
+      //
+      // But it is logged. A silent `return false` here meant a phone that
+      // could receive and relay but never deliver looked identical to a phone
+      // with nothing to say: `sent=0` and no reason anywhere. Android's GATT
+      // errors are numbered for a reason (133 is not 257) and the number is
+      // the whole diagnosis.
+      debugPrint('[mayday.mesh] send FAILED to ${target.peerId}: $e');
       return false;
     } finally {
       _busyPeers.remove(target.peerId);
@@ -312,6 +352,7 @@ class BleMeshTransport implements MeshTransport {
     }
 
     _peers.clear();
+    _peerLastSeen.clear();
     _busyPeers.clear();
     await _inbound.close();
   }
