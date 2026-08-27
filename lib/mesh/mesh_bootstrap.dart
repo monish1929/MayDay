@@ -144,6 +144,11 @@ class MeshBootstrap {
     // into an empty peer list just sits in the queue until the next flush.
     if (DebugSosTrigger.enabled) {
       Timer(const Duration(seconds: 12), () => DebugSosTrigger.raise(node));
+      // Both phones raise the hazard at the same delay so they generate it
+      // INDEPENDENTLY, before either has heard the other's. A device that
+      // received the claim first would be echoing, not witnessing.
+      Timer(const Duration(seconds: 14),
+          () => DebugSosTrigger.raiseHazard(node));
     }
 
     Timer.periodic(flushInterval, (_) async {

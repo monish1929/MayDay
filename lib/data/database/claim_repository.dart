@@ -4,6 +4,7 @@ import 'package:cbor/cbor.dart';
 import 'package:mayday/data/models/claim.dart';
 import 'package:mayday/data/models/logical_clock.dart';
 import 'package:mayday/data/models/claim_payload.dart';
+import 'package:mayday/data/models/corroboration.dart';
 import 'package:mayday/data/enums.dart';
 import 'package:mayday/data/database/database_helper.dart';
 
@@ -31,6 +32,58 @@ class ClaimRepository {
     );
   }
 
+  /// Records one device's corroboration of a claim.
+  ///
+  /// `INSERT OR IGNORE`, because the table's `PRIMARY KEY (claim_id,
+  /// device_id)` is itself a rule: one device is one witness, however many
+  /// times it says so. A device that repeats itself must not be able to talk a
+  /// claim up on its own — that is the per-device cap expressed in the schema
+  /// rather than left to calling code to remember (§2.2, and §9's admission
+  /// that Sybil resistance is mitigated, not solved).
+  ///
+  /// Ignoring rather than replacing keeps the FIRST account of what a device
+  /// witnessed. A later copy arriving by a longer path carries a worse
+  /// `hop_distance`, and overwriting would let a claim's weight drift with
+  /// routing noise.
+  Future<void> insertCorroboration(String claimId, Corroboration c) async {
+    final db = await _dbHelper.database;
+    await db.insert(
+      'corroborations',
+      {
+        'claim_id': claimId,
+        'device_id': c.deviceId,
+        'hop_distance': c.hopDistance,
+        'signal_strength': c.signalStrength,
+        'first_seen_via': c.firstSeenVia,
+        'kind': c.kind.index,
+        'is_volunteer': c.isVolunteer ? 1 : 0,
+        'clock_counter': c.logicalClock.counter,
+      },
+      conflictAlgorithm: ConflictAlgorithm.ignore,
+    );
+  }
+
+  Future<List<Corroboration>> getCorroborations(String claimId) async {
+    final db = await _dbHelper.database;
+    final rows = await db.query(
+      'corroborations',
+      where: 'claim_id = ?',
+      whereArgs: [claimId],
+    );
+    return rows.map((r) => Corroboration(
+          deviceId: r['device_id'] as String,
+          hopDistance: r['hop_distance'] as int,
+          signalStrength: r['signal_strength'] as double?,
+          firstSeenVia: r['first_seen_via'] as String?,
+          kind: CorroborationKind.values[r['kind'] as int],
+          isVolunteer: (r['is_volunteer'] as int) == 1,
+          logicalClock: LogicalClock(
+            deviceId: r['device_id'] as String,
+            counter: r['clock_counter'] as int,
+          ),
+        )).toList();
+  }
+
   Future<Claim?> getClaim(String id) async {
     final db = await _dbHelper.database;
     final List<Map<String, dynamic>> maps = await db.query(
@@ -40,7 +93,12 @@ class ClaimRepository {
     );
 
     if (maps.isNotEmpty) {
-      return _fromMap(maps.first);
+      final claim = _fromMap(maps.first);
+      // Hydrated on read: trust is recomputed from the corroboration list, so
+      // a claim loaded without it would score zero and silently read as less
+      // corroborated than it is.
+      claim.corroborations = await getCorroborations(claim.id);
+      return claim;
     }
     return null;
   }
@@ -53,9 +111,11 @@ class ClaimRepository {
       whereArgs: [ClaimStatus.active.index],
     );
 
-    return List.generate(maps.length, (i) {
-      return _fromMap(maps[i]);
-    });
+    final claims = List.generate(maps.length, (i) => _fromMap(maps[i]));
+    for (final claim in claims) {
+      claim.corroborations = await getCorroborations(claim.id);
+    }
+    return claims;
   }
 
   Map<String, dynamic> _toMap(Claim claim) {

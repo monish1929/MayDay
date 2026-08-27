@@ -244,9 +244,80 @@ void main() {
           await ingestion.ingest(await originate(by: phoneTwo, payload: hazard));
 
       expect(first.accepted, isTrue);
-      expect(second.rejection, IngestRejection.alreadyHeld,
-          reason: 'same merge id — merging itself is still B\'s to build');
-      expect((await repository.getActiveClaims()).length, 1);
+      expect(second.accepted, isTrue, reason: 'a second author is evidence');
+      expect(second.merge?.corroborated, isTrue);
+      expect((await repository.getActiveClaims()).length, 1,
+          reason: 'one hazard, not two - mergeable ids are meant to collide');
+
+      final stored = (await repository.getActiveClaims()).single;
+      expect(stored.corroborations.length, 1);
+      expect(stored.corroborations.single.deviceId, phoneTwo.deviceId);
+      expect(stored.corroborations.single.kind,
+          CorroborationKind.independentGeneration);
+
+      // ONE corroborator is not enough. corroboratedThreshold is 2.0 and
+      // maxContributionPerDevice is 1.0, so CORROBORATED needs the author plus
+      // TWO independent witnesses. Staying unconfirmed here is the correct
+      // answer, not a missing feature.
+      expect(stored.claimTrust, ClaimTrust.unconfirmed);
+    });
+
+    test('a third independent author reaches CORROBORATED', () async {
+      final phoneOne = await DeviceKeyPair.generate();
+      final phoneTwo = await DeviceKeyPair.generate();
+      final phoneThree = await DeviceKeyPair.generate();
+      const hazard = HazardReportPayload(
+        location: _here,
+        hazardType: HazardType.flood,
+        confirmationCount: 1,
+      );
+
+      await ingestion.ingest(await originate(by: phoneOne, payload: hazard));
+      await ingestion.ingest(await originate(by: phoneTwo, payload: hazard));
+      await ingestion.ingest(await originate(by: phoneThree, payload: hazard));
+
+      final stored = (await repository.getActiveClaims()).single;
+      expect(stored.corroborations.length, 2);
+      expect(stored.claimTrust, ClaimTrust.corroborated);
+    });
+
+    test('one author repeating itself never raises trust', () async {
+      final phoneOne = await DeviceKeyPair.generate();
+      final loud = await DeviceKeyPair.generate();
+      const hazard = HazardReportPayload(
+        location: _here,
+        hazardType: HazardType.flood,
+        confirmationCount: 1,
+      );
+
+      await ingestion.ingest(await originate(by: phoneOne, payload: hazard));
+      // One device, saying it twenty times. Section 2.2 plus the
+      // corroborations table's PRIMARY KEY (claim_id, device_id): one device
+      // is one witness, however loudly it repeats itself.
+      for (var i = 0; i < 20; i++) {
+        await ingestion.ingest(await originate(by: loud, payload: hazard));
+      }
+
+      final stored = (await repository.getActiveClaims()).single;
+      expect(stored.corroborations.length, 1);
+      expect(stored.claimTrust, ClaimTrust.unconfirmed);
+    });
+
+    test('two SOS in one bucket never corroborate each other', () async {
+      final phoneOne = await DeviceKeyPair.generate();
+      final phoneTwo = await DeviceKeyPair.generate();
+
+      final a = await ingestion.ingest(await originate(by: phoneOne));
+      final b = await ingestion.ingest(await originate(by: phoneTwo));
+
+      expect(a.accepted, isTrue);
+      expect(b.accepted, isTrue);
+      final active = await repository.getActiveClaims();
+      expect(active.length, 2);
+      for (final claim in active) {
+        expect(claim.corroborations, isEmpty);
+        expect(claim.claimTrust, ClaimTrust.unconfirmed);
+      }
     });
   });
 

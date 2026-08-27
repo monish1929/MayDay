@@ -8,6 +8,7 @@ import '../data/claim_factory.dart';
 import '../data/database/claim_repository.dart';
 import '../data/models/claim.dart';
 import '../data/models/claim_payload.dart';
+import '../data/enums.dart';
 import '../data/models/geo_point.dart';
 import 'mesh_node.dart';
 
@@ -44,11 +45,41 @@ class DebugSosTrigger {
   /// Builds, signs, stores and queues one SOS.
   ///
   /// Returns the claim id so it can be matched against the other phone's store.
-  static Future<String?> raise(MeshNode node) async {
+  static Future<String?> raise(MeshNode node) =>
+      _raise(node, const SosPayload(location: testLocation), 'SOS');
+
+  /// Raises a hazard at the same spot, which is the CORROBORATION test.
+  ///
+  /// Hazards use `hash(type + geohash_bucket)`, so two phones reporting the
+  /// same flood in the same bucket compute the SAME id and are supposed to
+  /// merge -- the exact mirror of the SOS case, where colliding would be a
+  /// disaster. When they merge, the second author is recorded as an
+  /// independent-generation corroboration (Section 2.2).
+  ///
+  /// Note what this will NOT show on two phones: `corroboratedThreshold` is
+  /// 2.0 against a 1.0 per-device cap, so CORROBORATED needs the author plus
+  /// TWO independent witnesses. With two phones the claim correctly stays
+  /// UNCONFIRMED with one corroboration recorded. That is the trust engine
+  /// working, not failing -- seeing the tier flip needs a third device.
+  static Future<String?> raiseHazard(MeshNode node) => _raise(
+        node,
+        const HazardReportPayload(
+          location: testLocation,
+          hazardType: HazardType.flood,
+          confirmationCount: 1,
+        ),
+        'HAZARD',
+      );
+
+  static Future<String?> _raise(
+    MeshNode node,
+    ClaimPayload payload,
+    String label,
+  ) async {
     if (!enabled) return null;
 
     final claim = await ClaimFactory.createClaim(
-      payload: const SosPayload(location: testLocation),
+      payload: payload,
       originDeviceId: node.keyPair.deviceId,
     );
 
@@ -71,13 +102,13 @@ class DebugSosTrigger {
       displayLifetime: null,
     );
     if (stored == null) {
-      debugPrint('[mayday.mesh] DEBUG SOS: failed to rebuild claim');
+      debugPrint('[mayday.mesh] DEBUG $label: failed to rebuild claim');
       return null;
     }
 
     await ClaimRepository().insertClaim(stored);
 
-    debugPrint('[mayday.mesh] DEBUG SOS raised: id=${stored.id} '
+    debugPrint('[mayday.mesh] DEBUG $label raised: id=${stored.id} '
         'origin=${stored.originDeviceId} seq=${stored.originSequence} '
         'trust=${stored.claimTrust.name} hopLimit=${envelope.hopLimit}');
     return stored.id;
