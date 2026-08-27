@@ -169,11 +169,46 @@ class RelayQueue {
     _queue.clear();
 
     var sent = 0;
+    final undelivered = <_QueuedRelay>[];
+
     for (final item in batch) {
+      var reachedAnyone = false;
       for (final target in ordered) {
-        if (await sender(target, item.envelope)) sent++;
+        if (await sender(target, item.envelope)) {
+          sent++;
+          reachedAnyone = true;
+        }
       }
+      // Reached nobody: keep it. The queue was cleared before sending, so
+      // without this the envelope is destroyed by a failed write -- one
+      // connect timeout and the message is gone with no record it existed.
+      //
+      // Not a theoretical case. Found on hardware during Day 4: a phone whose
+      // GATT connect timed out delivered nothing for the rest of its life,
+      // because every claim it raised got exactly ONE attempt and then
+      // vanished. The radio failure was transient; the queue made it
+      // permanent.
+      //
+      // Section 1.1 decides this: no rule may make an unresolved SOS
+      // disappear from a device holding it, and silently discarding the only
+      // copy queued for transmission is such a rule. A neighbour out of range
+      // for one drain is ordinary here -- the next drain is when it works.
+      if (!reachedAnyone) undelivered.add(item);
     }
+
+    if (undelivered.isNotEmpty) {
+      // Re-queued with their original seq, so they keep their place rather
+      // than going behind traffic raised while they were failing.
+      _queue.addAll(undelivered);
+
+      // Retrying is not a licence to grow without bound: droppable and
+      // standard traffic is re-capped exactly as on enqueue. `critical` is
+      // deliberately exempt and therefore retries forever. On a device that
+      // can reach nobody, SOS envelopes accumulate -- the trade section 1.1
+      // already made, and the right way round.
+      _applyBackpressure();
+    }
+
     return sent;
   }
 

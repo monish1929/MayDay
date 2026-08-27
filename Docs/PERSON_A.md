@@ -146,7 +146,11 @@ The wiring above the radio is proven against a fake transport (`test/mesh/mesh_n
 
 **Three bugs found, all only findable on hardware** (see the fix commit): the plugin's managers were never authorized, so `addService`/`startAdvertising` silently never completed; every failure path returned in silence because `main.dart` discards the result; and `dart:developer`'s `log()` never reaches `adb logcat`. A fourth — a 5s timeout applied to a call that raises a permission dialog and waits on a human.
 
-**Still open: delivery was one-directional in the first run.** The Motorola never received the Xiaomi's claims (`rx=1 dup=1 stored=0` — the one envelope it saw was its own, relayed back, correctly dropped by de-dup). Probable cause found and fixed: `_peers` had no eviction, so rotated BLE addresses accumulated (`peers=2` with two phones in the room) and the relay queue drained onto dead handles. Re-test after the eviction fix.
+**RESOLVED: delivery is now bidirectional.** Root cause was not the radio. `RelayQueue.drain()` cleared the queue *before* attempting sends and ignored the result, so a failed write destroyed the envelope — every claim got exactly ONE delivery attempt in its life, and a phone whose GATT connect timed out once delivered nothing ever again. Undelivered envelopes are now re-queued; `critical` retries indefinitely (§1.1), droppable and standard are re-capped as on enqueue. Four new tests cover it.
+
+Proof on hardware: both phones ended at `rx=2 dup=1 stored=1 relayed=1`, and the Xiaomi's claim `c760ad8be99b…` (seq 5) reached the Motorola's store **after 4 logged `send FAILED` timeouts**. Its earlier claims (seq 1–4, raised before the fix) never arrived and are gone — the same radio conditions, the only difference being whether a transient failure was allowed to destroy the message.
+
+**Superseded, kept for the record: delivery was one-directional in the first run.** The Motorola never received the Xiaomi's claims (`rx=1 dup=1 stored=0` — the one envelope it saw was its own, relayed back, correctly dropped by de-dup). Probable cause found and fixed: `_peers` had no eviction, so rotated BLE addresses accumulated (`peers=2` with two phones in the room) and the relay queue drained onto dead handles. Re-test after the eviction fix.
 
 ### Day 5 — Routing policy v1
 - [x] Full flood for `sos`, `sosProxy`, `hazardReport` — every device relays. `RoutingPolicy.decide()`; resolutions, vouches and revocations flood too.
