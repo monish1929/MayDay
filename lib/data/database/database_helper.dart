@@ -16,9 +16,12 @@ class DatabaseHelper {
     return _database!;
   }
 
+  /// Set only by [resetForTest]. When non-null the store is in-memory, which
+  /// keeps concurrently-running test files from sharing one database file.
+  static String? _overridePath;
+
   Future<Database> _initDB(String filePath) async {
-    final dbPath = await getDatabasesPath();
-    final path = join(dbPath, filePath);
+    final path = _overridePath ?? join(await getDatabasesPath(), filePath);
 
     return await openDatabase(
       path,
@@ -85,34 +88,25 @@ class DatabaseHelper {
   }
 
   Future<void> close() async {
-    if (_database != null) {
-      await _database!.close();
-      _database = null;
-    }
+    final db = await instance.database;
+    db.close();
   }
 
-  /// Test seam only — drops the open handle and deletes the underlying file
-  /// so each test starts against a freshly created schema. Never call this
-  /// from app code: it destroys the claim store, and §1.1 says an active SOS
-  /// is never silently discarded.
+  /// Test seam only — switches the store to an in-memory database and drops
+  /// the open handle, so each test starts against a freshly created schema.
+  ///
+  /// In-memory rather than deleting the real file, for two reasons. It never
+  /// touches a device's actual claim store, and `flutter test` runs files
+  /// concurrently: on one shared file, one test's reset wipes another's data
+  /// mid-run. Each test process gets its own in-memory database instead.
+  ///
+  /// Never call this from app code — §1.1 says an active SOS is never
+  /// silently discarded, and this discards everything.
   Future<void> resetForTest() async {
-    if (_database != null && _database!.isOpen) {
-      try {
-        await _database!.delete('claims');
-        await _database!.delete('corroborations');
-        await _database!.delete('seen_messages');
-        return;
-      } catch (_) {
-        // Fall through to close and delete if table schemas changed
-      }
-    }
+    _overridePath = inMemoryDatabasePath;
     if (_database != null) {
       await _database!.close();
       _database = null;
     }
-    final dbPath = join(await getDatabasesPath(), 'mayday.db');
-    try {
-      await deleteDatabase(dbPath);
-    } catch (_) {}
   }
 }

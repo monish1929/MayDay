@@ -43,12 +43,26 @@ class Envelope {
   static const int protocolVersion = 1;
   static const int msgIdLength = 16;
   static const int signatureLength = 64;
+  static const int publicKeyLength = 32;
 
   final int v;
   final Uint8List msgId; // random per TRANSMISSION, never the claim's own id — §9.1
   final int hopLimit; // decremented at each hop
   final EnvelopeKind kind;
   final Uint8List body; // CBOR, shape depends on kind
+
+  /// Raw 32-byte Ed25519 public key of the originating device.
+  ///
+  /// Carried in the envelope so every message is self-verifying. A relay
+  /// three hops away has never met the originator and has no way to ask
+  /// anyone for a key -- there is no server and no guarantee of prior
+  /// contact. Without this field the claims that travel furthest, which
+  /// are the ones that matter most, would be exactly the unverifiable ones.
+  ///
+  /// `originDeviceId` is a truncated hash of this key, so a receiver can
+  /// also confirm the id matches whoever actually signed (see
+  /// DeviceKeyPair.deviceId). Costs 32 bytes against the 400B budget.
+  final Uint8List originPubKey;
   final Uint8List originSig; // Ed25519 over (v || kind || body) — see signingPayload()
 
   const Envelope({
@@ -57,6 +71,7 @@ class Envelope {
     required this.hopLimit,
     required this.kind,
     required this.body,
+    required this.originPubKey,
     required this.originSig,
   });
 
@@ -87,6 +102,7 @@ class Envelope {
       CborSmallInt(hopLimit),
       CborSmallInt(kind.index),
       CborBytes(body),
+      CborBytes(originPubKey),
       CborBytes(originSig),
     ]);
   }
@@ -100,9 +116,9 @@ class Envelope {
           'expected a CBOR array, got ${value.runtimeType}',
         );
       }
-      if (value.length != 6) {
+      if (value.length != 7) {
         return EnvelopeDecodeError(
-          'expected 6 fields, got ${value.length}',
+          "expected 7 fields, got ${value.length}",
         );
       }
 
@@ -111,7 +127,8 @@ class Envelope {
       final hopLimitField = value[2];
       final kindField = value[3];
       final bodyField = value[4];
-      final sigField = value[5];
+      final pubKeyField = value[5];
+      final sigField = value[6];
 
       if (vField is! CborSmallInt) {
         return const EnvelopeDecodeError('v: expected an integer');
@@ -128,8 +145,11 @@ class Envelope {
       if (bodyField is! CborBytes) {
         return const EnvelopeDecodeError('body: expected bytes');
       }
+      if (pubKeyField is! CborBytes) {
+        return const EnvelopeDecodeError("originPubKey: expected bytes");
+      }
       if (sigField is! CborBytes) {
-        return const EnvelopeDecodeError('originSig: expected bytes');
+        return const EnvelopeDecodeError("originSig: expected bytes");
       }
 
       if (kindField.value < 0 || kindField.value >= EnvelopeKind.values.length) {
@@ -138,6 +158,11 @@ class Envelope {
       if (msgIdField.bytes.length != msgIdLength) {
         return EnvelopeDecodeError(
           'msgId: expected $msgIdLength bytes, got ${msgIdField.bytes.length}',
+        );
+      }
+      if (pubKeyField.bytes.length != publicKeyLength) {
+        return EnvelopeDecodeError(
+          "originPubKey: expected $publicKeyLength bytes, got ${pubKeyField.bytes.length}",
         );
       }
       if (sigField.bytes.length != signatureLength) {
@@ -152,6 +177,7 @@ class Envelope {
         hopLimit: hopLimitField.value,
         kind: EnvelopeKind.values[kindField.value],
         body: Uint8List.fromList(bodyField.bytes),
+        originPubKey: Uint8List.fromList(pubKeyField.bytes),
         originSig: Uint8List.fromList(sigField.bytes),
       ));
     } catch (e) {

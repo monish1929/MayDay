@@ -47,6 +47,14 @@ class LogicalClock implements Comparable<LogicalClock> {
     ]);
   }
 
-  @override
-  String toString() => 'LogicalClock($deviceId, counter: $counter)';
+  /// Rebuilds a clock from wire bytes. Returns null on anything malformed --
+  /// callers are on the receive path, where bad input is expected rather
+  /// than exceptional (CLAIM_SCHEMA.md §9.3).
+  static LogicalClock? fromCbor(CborValue value) {
+    if (value is! CborList || value.length != 2) return null;
+    final device = value[0];
+    final counter = value[1];
+    if (device is! CborString || counter is! CborSmallInt) return null;
+    return LogicalClock(deviceId: device.toString(), counter: counter.value);
+  }
 }
