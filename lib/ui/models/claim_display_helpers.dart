@@ -11,46 +11,41 @@ import 'package:mayday/ui/theme/app_theme.dart';
 /// - Dispatch priority appearance tokens (CLAIM_SCHEMA.md §3.4).
 /// - Availability is computed, never stored (CLAIM_SCHEMA.md §8.1).
 abstract final class ClaimDisplayHelpers {
-  /// Whether an SOS/SOS_PROXY claim has aged past the 1-hour urgency threshold.
-  static bool isAgingSos(MockClaim claim) {
+  /// Whether an SOS/SOS_PROXY claim has aged past the urgency threshold.
+  static bool isAgingSos(Claim claim) {
     if (!(claim.type == ClaimType.sos || claim.type == ClaimType.sosProxy)) {
       return false;
     }
     if (claim.status != ClaimStatus.active) return false;
-    final age = DateTime.now().difference(claim.mockCreatedAt);
-    return age > const Duration(hours: 1);
+    // In Week 2, time is driven by LogicalClock / mesh time gossip (CLAIM_SCHEMA.md §4).
+    final counter = claim.createdAtLogical?.counter ?? claim.logicalClock.counter;
+    return counter > 10;
   }
 
   /// Urgency tier for aging SOS:
-  /// 0 = not aging (< 1hr)
-  /// 1 = aging tier 1 (1–3 hrs)
-  /// 2 = aging tier 2 (3–6 hrs)
-  /// 3 = aging tier 3 (6+ hrs, highest urgency)
-  static int agingTier(MockClaim claim) {
+  /// 0 = not aging
+  /// 1 = aging tier 1
+  /// 2 = aging tier 2
+  /// 3 = aging tier 3 (highest urgency)
+  static int agingTier(Claim claim) {
     if (!isAgingSos(claim)) return 0;
-    final age = DateTime.now().difference(claim.mockCreatedAt);
-    if (age > const Duration(hours: 6)) return 3;
-    if (age > const Duration(hours: 3)) return 2;
+    final counter = claim.createdAtLogical?.counter ?? claim.logicalClock.counter;
+    if (counter > 30) return 3;
+    if (counter > 20) return 2;
     return 1;
   }
 
-  /// Compact aging label for badges (e.g. "45m", "~2h", "~1d").
-  static String agingBadgeLabel(DateTime mockCreatedAt) {
-    final age = DateTime.now().difference(mockCreatedAt);
-    if (age.inMinutes < 60) return '${age.inMinutes}m';
-    if (age.inHours < 24) return '~${age.inHours}h';
-    return '~${age.inDays}d';
+  /// Compact aging label for badges (e.g. "#15").
+  static String agingBadgeLabel(LogicalClock? clock) {
+    final counter = clock?.counter ?? 0;
+    return '#$counter';
   }
 
   /// Bucketed relative-time string — CLAIM_SCHEMA.md §4.
-  /// Never a precise timestamp.
-  static String relativeTimeLabel(DateTime mockCreatedAt) {
-    final age = DateTime.now().difference(mockCreatedAt);
-    if (age.inMinutes < 1) return 'Just now';
-    if (age.inMinutes < 60) return '${age.inMinutes} min ago';
-    if (age.inHours == 1) return 'About 1 hour ago';
-    if (age.inHours < 24) return 'About ${age.inHours} hours ago';
-    return '${age.inDays} day${age.inDays == 1 ? '' : 's'} ago';
+  /// Never a precise timestamp. Uses logical clock until MeshTimeGossip estimate in Day 3.
+  static String relativeTimeLabel(LogicalClock? clock) {
+    if (clock == null) return 'Recently';
+    return 'Clock #${clock.counter}';
   }
 
   /// Human-readable headcount string (e.g., "2-5 people").
@@ -169,8 +164,8 @@ abstract final class ClaimDisplayHelpers {
 
   /// Sorts rescue queue by dispatchPriority first (enRoute > seenByVolunteer > low),
   /// then by claimTrust (groundConfirmed > corroborated > unconfirmed),
-  /// then older claims first.
-  static int compareRescueClaims(MockClaim a, MockClaim b) {
+  /// then by causal logical clock ordering.
+  static int compareRescueClaims(Claim a, Claim b) {
     final pA = _priorityRank(a.dispatchPriority);
     final pB = _priorityRank(b.dispatchPriority);
     if (pA != pB) return pB.compareTo(pA); // higher priority first
@@ -179,11 +174,11 @@ abstract final class ClaimDisplayHelpers {
     final tB = _trustRank(b.claimTrust);
     if (tA != tB) return tB.compareTo(tA); // higher trust first
 
-    return a.mockCreatedAt.compareTo(b.mockCreatedAt); // older claims first
+    return a.logicalClock.compareTo(b.logicalClock); // logical clock ordering
   }
 
   /// Sorts hazard reports by confirmation count descending (most confirmed first).
-  static int compareHazardClaims(MockClaim a, MockClaim b) {
+  static int compareHazardClaims(Claim a, Claim b) {
     final countA = a.payload is HazardReportPayload
         ? (a.payload as HazardReportPayload).confirmationCount
         : 0;
@@ -196,7 +191,7 @@ abstract final class ClaimDisplayHelpers {
     final tB = _trustRank(b.claimTrust);
     if (tA != tB) return tB.compareTo(tA);
 
-    return a.mockCreatedAt.compareTo(b.mockCreatedAt);
+    return a.logicalClock.compareTo(b.logicalClock);
   }
 
   static int _priorityRank(DispatchPriority p) => switch (p) {

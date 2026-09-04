@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:mayday/common/device_id.dart';
 import 'package:mayday/ui/models/models.dart';
 import 'package:mayday/ui/theme/app_theme.dart';
 
@@ -7,7 +8,7 @@ import 'package:mayday/ui/theme/app_theme.dart';
 /// Features:
 /// - Hazard kind selector: flood | roadBlock | structuralDamage | other (HazardType enum)
 /// - Optional note: capped at 80 characters (CLAIM_SCHEMA.md §9.2)
-/// - On submit: constructs HazardReportPayload and prints to console
+/// - On submit: constructs HazardReportPayload, creates Claim via ClaimFactory, and persists via ClaimRepository
 class ReportFormSheet extends StatefulWidget {
   final GeoPoint initialLocation;
 
@@ -41,9 +42,10 @@ class _ReportFormSheetState extends State<ReportFormSheet> {
     super.dispose();
   }
 
-  void _submitForm() {
+  Future<void> _submitForm() async {
     final rawNote = _noteController.text.trim();
     final note = rawNote.isEmpty ? null : rawNote;
+    final deviceId = await LocalDeviceId.getDeviceId();
 
     final payload = HazardReportPayload(
       location: widget.initialLocation,
@@ -52,22 +54,24 @@ class _ReportFormSheetState extends State<ReportFormSheet> {
       note: note,
     );
 
-    // Print constructed payload to console — Week 1 scope
-    debugPrint('════════════════════════════════════════════════════════════');
-    debugPrint('[MayDay Form] SUBMITTED HAZARD REPORT CLAIM:');
-    debugPrint('  Payload Class: HazardReportPayload');
-    debugPrint('  Location: (${payload.location.lat}, ${payload.location.lon})');
-    debugPrint('  Hazard Type: ${payload.hazardType.name}');
-    debugPrint('  Confirmation Count: ${payload.confirmationCount}');
-    debugPrint('  Note: "${payload.note ?? ''}"');
-    debugPrint('════════════════════════════════════════════════════════════');
+    // Assemble real Claim via ClaimFactory — PERSON_C.md Week 2 Day 1
+    final claim = await ClaimFactory.createClaim(
+      payload: payload,
+      originDeviceId: deviceId,
+    );
 
+    // TODO: SIGNING GAP — Claim originated with placeholder signature (Uint8List(0)).
+    // Real Ed25519 signing over claim.toSignedCoreCbor() is blocked on Phase 4
+    // identity/keypair work (lib/identity/). See CLAIM_SCHEMA.md §5 and PERSON_C.md Week 2 Day 1.
+    await ClaimRepository().insertClaim(claim);
+
+    if (!mounted) return;
     Navigator.pop(context);
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          'Hazard report submitted for ${_hazardLabel(_hazardType)} (Console log)',
+          'Hazard report registered and saved for ${_hazardLabel(_hazardType)}',
           style: const TextStyle(fontWeight: FontWeight.w600),
         ),
         backgroundColor: AppColors.amberDark,

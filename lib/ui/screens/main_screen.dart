@@ -1,6 +1,9 @@
+import 'dart:async';
 import 'dart:math';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:maplibre_gl/maplibre_gl.dart';
+import 'package:mayday/common/debug_claim_seeder.dart';
 import 'package:mayday/ui/forms/contribute_form_sheet.dart';
 import 'package:mayday/ui/forms/report_form_sheet.dart';
 import 'package:mayday/ui/forms/rescue_form_sheet.dart';
@@ -38,14 +41,14 @@ class MainScreen extends StatefulWidget {
 }
 
 class MainScreenPinItem {
-  final MockClaim claim;
+  final Claim claim;
   final Point<num> screenPoint;
 
   MainScreenPinItem({required this.claim, required this.screenPoint});
 }
 
 class MainScreenClusterItem {
-  final List<MockClaim> claims;
+  final List<Claim> claims;
   final Point<num> screenPoint;
 
   MainScreenClusterItem({required this.claims, required this.screenPoint});
@@ -64,8 +67,9 @@ class _MainScreenState extends State<MainScreen> {
   String? _mapError;
   MapLibreMapController? _mapController;
 
-  /// All mock claims for Week 1 — will be replaced by real SQLite queries in Week 2.
-  final List<MockClaim> _allClaims = MockData.generateMockClaims();
+  /// Active claims subscription from ClaimRepository.
+  StreamSubscription<List<Claim>>? _claimsSubscription;
+  List<Claim> _allClaims = [];
 
   /// Screen-projected pins and clusters for the current view.
   List<MainScreenPinItem> _renderedPins = [];
@@ -75,10 +79,37 @@ class _MainScreenState extends State<MainScreen> {
   /// Safety net flag to prevent infinite retry loops if initial projection fails
   bool _hasRetriedInitialProjection = false;
 
+  /// Guards against concurrent _updatePinScreenPositions() runs.
+  /// Without this, a slow projection loop (120 × async toScreenLocation) can
+  /// stack on itself if the stream emits or camera-idle fires mid-flight,
+  /// causing compounding lag during panning.
+  bool _isProjectionRunning = false;
+
+  /// Debounce timer for camera-idle triggered re-projection.
+  /// Prevents the overlay from recalculating on every intermediate idle
+  /// event that MapLibre emits during a fling/deceleration.
+  Timer? _projectionDebounce;
+
   @override
   void initState() {
     super.initState();
     _initializeMap();
+    _subscribeToClaims();
+  }
+
+  void _subscribeToClaims() {
+    _claimsSubscription = ClaimRepository().watchActiveClaims().listen(
+      (claims) {
+        if (!mounted) return;
+        setState(() {
+          _allClaims = claims;
+        });
+        _updatePinScreenPositions();
+      },
+      onError: (e) {
+        debugPrint('[MainScreen] Error from watchActiveClaims stream: $e');
+      },
+    );
   }
 
   Future<void> _initializeMap() async {
@@ -99,126 +130,247 @@ class _MainScreenState extends State<MainScreen> {
     }
   }
 
-  /// Projects lat/lon of filtered claims to 2D screen coordinates on camera change.
-  /// Handles zoom-based clustering per CLAIM_SCHEMA.md §2 and PERSON_C.md §6.
+  /// Returns the cluster half-extent (in logical pixels) for a given claim type.
+  ///
+  /// SOS/Proxy SOS render as ~48px diameter circles → half-extent 24px.
+  /// Hazard and Resource render as label pills whose width depends on text;
+  /// the longest hazard name ("structuralDamage") renders ~110px wide, so
+  /// we use 60px half-extent. Resource uses the same pill shape.
+  ///
+  /// Cluster distance = half-extent(A) + half-extent(B) + 8px gutter.
+  /// Using fixed 45px for both was too small for label cards: two hazard
+  /// cards 40px apart center-to-center are visually fully overlapping.
+  static double _pinHalfExtent(ClaimType type) {
+    return switch (type) {
+      ClaimType.sos => 24.0,
+      ClaimType.sosProxy => 24.0,
+      ClaimType.hazardReport => 60.0, // pill card ≈ 110–120px wide
+      ClaimType.resource => 55.0,    // pill card ≈ 100–110px wide
+    };
+  }
+
+  /// Projects lat/lon of filtered claims to 2D screen coordinates.
+  ///
+  /// Fix 1 — In-flight guard: if a projection loop is already running we
+  /// skip the new call rather than stacking async work. The in-flight loop
+  /// was already operating on the latest _allClaims snapshot (updated
+  /// synchronously by the stream listener before calling this), so its
+  /// result will be current. A second concurrent loop would only waste
+  /// toScreenLocation round-trips and extend the lag.
+  ///
+  /// Fix 2 — Debounce: camera-idle callers go through _scheduleProjection()
+  /// which coalesces rapid consecutive idle events (e.g. during fling
+  /// deceleration) into a single run 80ms after the last event.
   Future<void> _updatePinScreenPositions() async {
-    debugPrint(
-      '[MainScreen] _updatePinScreenPositions called, mapController=${_mapController != null}',
-    );
-    final controller = _mapController;
-    if (controller == null || !mounted) return;
-
-    final zoom = controller.cameraPosition?.zoom ?? _currentZoom;
-    _currentZoom = zoom;
-
-    // Filter claims by active layer — PERSON_C.md §3 Day 4
-    final filteredClaims = _allClaims.where((c) {
-      if (_showEmergencyLayer) {
-        return c.type == ClaimType.sos ||
-            c.type == ClaimType.sosProxy ||
-            c.type == ClaimType.hazardReport;
-      } else {
-        return c.type == ClaimType.resource;
-      }
-    }).toList();
-    debugPrint('[MainScreen] filteredClaims count: ${filteredClaims.length}');
-
-    final List<MainScreenPinItem> projectedItems = [];
-    for (final claim in filteredClaims) {
-      try {
-        final screenPos = await controller.toScreenLocation(
-          LatLng(claim.payload.location.lat, claim.payload.location.lon),
-        );
-        projectedItems.add(
-          MainScreenPinItem(claim: claim, screenPoint: screenPos),
-        );
-      } catch (e) {
-        debugPrint('[MainScreen] toScreenLocation failed for ${claim.id}: $e');
-      }
-    }
-    debugPrint('[MainScreen] projectedItems count: ${projectedItems.length}');
-
-    if (!mounted) return;
-
-    // Single retry safety net if initial style projection was not yet reliable
-    if (projectedItems.isEmpty &&
-        filteredClaims.isNotEmpty &&
-        !_hasRetriedInitialProjection) {
-      _hasRetriedInitialProjection = true;
-      debugPrint('[MainScreen] Scheduling retry projection in 300ms');
-      Future.delayed(const Duration(milliseconds: 300), () {
-        if (mounted) {
-          _updatePinScreenPositions();
-        }
-      });
+    // In-flight guard — drop the call if one is already running.
+    if (_isProjectionRunning) {
+      debugPrint('[MainScreen] _updatePinScreenPositions skipped — already running');
       return;
     }
+    _isProjectionRunning = true;
 
-    // Reset retry flag once pins are successfully projected
-    if (projectedItems.isNotEmpty) {
-      _hasRetriedInitialProjection = false;
-    }
+    try {
+      debugPrint(
+        '[MainScreen] _updatePinScreenPositions called, mapController=${_mapController != null}',
+      );
+      final controller = _mapController;
+      if (controller == null || !mounted) return;
 
-    // Cluster nearby pins if zoom is low (zoom < 11.5)
-    // Display-only per CLAIM_SCHEMA.md §2; underlying records remain separate.
-    if (_currentZoom < 11.5) {
-      final List<MainScreenClusterItem> clusters = [];
-      final List<MainScreenPinItem> individualPins = [];
-      final Set<int> clusteredIndices = {};
+      final zoom = controller.cameraPosition?.zoom ?? _currentZoom;
+      _currentZoom = zoom;
 
-      for (int i = 0; i < projectedItems.length; i++) {
-        if (clusteredIndices.contains(i)) continue;
+      // Filter claims by active layer — PERSON_C.md §3 Day 4
+      final filteredClaims = _allClaims.where((c) {
+        if (_showEmergencyLayer) {
+          return c.type == ClaimType.sos ||
+              c.type == ClaimType.sosProxy ||
+              c.type == ClaimType.hazardReport;
+        } else {
+          return c.type == ClaimType.resource;
+        }
+      }).toList();
+      debugPrint('[MainScreen] filteredClaims count: ${filteredClaims.length}');
 
-        final current = projectedItems[i];
-        final List<MockClaim> group = [current.claim];
-        num totalX = current.screenPoint.x;
-        num totalY = current.screenPoint.y;
+      // 1. Viewport Culling — only consider claims within or near the visible camera region
+      List<Claim> candidateClaims = filteredClaims;
+      try {
+        final visibleRegion = await controller.getVisibleRegion();
+        final latSpan = (visibleRegion.northeast.latitude - visibleRegion.southwest.latitude).abs();
+        final lonSpan = (visibleRegion.northeast.longitude - visibleRegion.southwest.longitude).abs();
+        // 20% margin around viewport so pins entering the screen edge animate/render seamlessly
+        final latMargin = latSpan * 0.20;
+        final lonMargin = lonSpan * 0.20;
+        final minLat = min(visibleRegion.southwest.latitude, visibleRegion.northeast.latitude) - latMargin;
+        final maxLat = max(visibleRegion.southwest.latitude, visibleRegion.northeast.latitude) + latMargin;
+        final minLon = min(visibleRegion.southwest.longitude, visibleRegion.northeast.longitude) - lonMargin;
+        final maxLon = max(visibleRegion.southwest.longitude, visibleRegion.northeast.longitude) + lonMargin;
 
-        for (int j = i + 1; j < projectedItems.length; j++) {
-          if (clusteredIndices.contains(j)) continue;
+        candidateClaims = filteredClaims.where((c) {
+          final lat = c.payload.location.lat;
+          final lon = c.payload.location.lon;
+          return lat >= minLat && lat <= maxLat && lon >= minLon && lon <= maxLon;
+        }).toList();
+      } catch (e) {
+        debugPrint('[MainScreen] getVisibleRegion failed, falling back to all filtered claims: $e');
+      }
 
-          final candidate = projectedItems[j];
-          final dx = current.screenPoint.x - candidate.screenPoint.x;
-          final dy = current.screenPoint.y - candidate.screenPoint.y;
-          final dist = sqrt(dx * dx + dy * dy);
+      if (!mounted) return;
 
-          if (dist < 45.0) {
-            // Screen cluster threshold
-            group.add(candidate.claim);
-            totalX += candidate.screenPoint.x;
-            totalY += candidate.screenPoint.y;
-            clusteredIndices.add(j);
+      final pixelRatio = MediaQuery.maybeOf(context)?.devicePixelRatio ?? 1.0;
+      final List<MainScreenPinItem> projectedItems = [];
+
+      if (candidateClaims.isNotEmpty) {
+        try {
+          // 2. Vectorized Batched Projection — single platform-channel call instead of N sequential awaits
+          final latLngList = candidateClaims
+              .map((c) => LatLng(c.payload.location.lat, c.payload.location.lon))
+              .toList();
+          final physicalPositions = await controller.toScreenLocationBatch(latLngList);
+
+          for (int i = 0; i < candidateClaims.length && i < physicalPositions.length; i++) {
+            final physicalPos = physicalPositions[i];
+            final logicalPos = Point<num>(
+              physicalPos.x / pixelRatio,
+              physicalPos.y / pixelRatio,
+            );
+            projectedItems.add(
+              MainScreenPinItem(claim: candidateClaims[i], screenPoint: logicalPos),
+            );
+          }
+        } catch (e) {
+          debugPrint('[MainScreen] toScreenLocationBatch failed, falling back to sequential: $e');
+          for (final claim in candidateClaims) {
+            try {
+              final physicalPos = await controller.toScreenLocation(
+                LatLng(claim.payload.location.lat, claim.payload.location.lon),
+              );
+              final logicalPos = Point<num>(
+                physicalPos.x / pixelRatio,
+                physicalPos.y / pixelRatio,
+              );
+              projectedItems.add(
+                MainScreenPinItem(claim: claim, screenPoint: logicalPos),
+              );
+            } catch (err) {
+              debugPrint('[MainScreen] toScreenLocation failed for ${claim.id}: $err');
+            }
+          }
+        }
+      }
+      debugPrint('[MainScreen] projectedItems count: ${projectedItems.length}');
+
+      if (!mounted) return;
+
+      // Single retry safety net if initial style projection was not yet reliable
+      if (projectedItems.isEmpty &&
+          filteredClaims.isNotEmpty &&
+          !_hasRetriedInitialProjection) {
+        _hasRetriedInitialProjection = true;
+        debugPrint('[MainScreen] Scheduling retry projection in 300ms');
+        Future.delayed(const Duration(milliseconds: 300), () {
+          if (mounted) {
+            _isProjectionRunning = false; // release guard so retry can run
+            _updatePinScreenPositions();
+          }
+        });
+        return;
+      }
+
+      // Reset retry flag once pins are successfully projected
+      if (projectedItems.isNotEmpty) {
+        _hasRetriedInitialProjection = false;
+      }
+
+      // Cluster nearby pins if zoom is low (zoom < 11.5)
+      // Display-only per CLAIM_SCHEMA.md §2; underlying records remain separate.
+      //
+      // Fix 3 — Per-type cluster threshold:
+      // dist threshold = halfExtent(A) + halfExtent(B) + 8px gutter.
+      // Previously a fixed 45px was used, which only worked for SOS circles.
+      // Hazard label cards are ~110px wide; two hazard pins 40px apart
+      // passed the old test but were fully overlapping on screen.
+      if (_currentZoom < 11.5) {
+        final List<MainScreenClusterItem> clusters = [];
+        final List<MainScreenPinItem> individualPins = [];
+        final Set<int> clusteredIndices = {};
+
+        for (int i = 0; i < projectedItems.length; i++) {
+          if (clusteredIndices.contains(i)) continue;
+
+          final current = projectedItems[i];
+          final List<Claim> group = [current.claim];
+          num totalX = current.screenPoint.x;
+          num totalY = current.screenPoint.y;
+
+          for (int j = i + 1; j < projectedItems.length; j++) {
+            if (clusteredIndices.contains(j)) continue;
+
+            final candidate = projectedItems[j];
+            final dx = current.screenPoint.x - candidate.screenPoint.x;
+            final dy = current.screenPoint.y - candidate.screenPoint.y;
+            final dist = sqrt(dx * dx + dy * dy);
+
+            // Dynamic threshold: sum of each pin's half-extent + 8px gutter
+            final threshold =
+                _pinHalfExtent(current.claim.type) +
+                _pinHalfExtent(candidate.claim.type) +
+                8.0;
+
+            if (dist < threshold) {
+              group.add(candidate.claim);
+              totalX += candidate.screenPoint.x;
+              totalY += candidate.screenPoint.y;
+              clusteredIndices.add(j);
+            }
+          }
+
+          if (group.length > 1) {
+            clusteredIndices.add(i);
+            clusters.add(
+              MainScreenClusterItem(
+                claims: group,
+                screenPoint: Point(totalX / group.length, totalY / group.length),
+              ),
+            );
+          } else {
+            individualPins.add(current);
           }
         }
 
-        if (group.length > 1) {
-          clusteredIndices.add(i);
-          clusters.add(
-            MainScreenClusterItem(
-              claims: group,
-              screenPoint: Point(totalX / group.length, totalY / group.length),
-            ),
-          );
-        } else {
-          individualPins.add(current);
+        if (mounted) {
+          setState(() {
+            _renderedPins = individualPins;
+            _renderedClusters = clusters;
+          });
+        }
+      } else {
+        // Zoomed in: render every pin individually at its precise coordinates
+        if (mounted) {
+          setState(() {
+            _renderedPins = projectedItems;
+            _renderedClusters = [];
+          });
         }
       }
-
-      setState(() {
-        _renderedPins = individualPins;
-        _renderedClusters = clusters;
-      });
-    } else {
-      // Zoomed in: render every pin individually at its precise coordinates
-      setState(() {
-        _renderedPins = projectedItems;
-        _renderedClusters = [];
-      });
+    } finally {
+      _isProjectionRunning = false;
     }
+  }
+
+  /// Debounced entry-point for camera-idle events.
+  /// Coalesces rapid consecutive idle events (fling deceleration) into a
+  /// single projection run 80ms after the last event fires.
+  void _scheduleProjection() {
+    _projectionDebounce?.cancel();
+    _projectionDebounce = Timer(const Duration(milliseconds: 80), () {
+      if (mounted) _updatePinScreenPositions();
+    });
   }
 
   @override
   void dispose() {
+    _projectionDebounce?.cancel();
+    _claimsSubscription?.cancel();
     _mapController?.dispose();
     _mapManager.dispose();
     super.dispose();
@@ -233,19 +385,48 @@ class _MainScreenState extends State<MainScreen> {
         elevation: 0,
         title: Row(
           children: [
-            const Icon(
-              Icons.shield_outlined,
-              color: Colors.white,
-              size: 22,
-            ),
-            const SizedBox(width: 8),
-            const Text(
-              'MayDay',
-              style: TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w800,
-                fontSize: 20,
-                letterSpacing: 0.5,
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onLongPress: kDebugMode
+                  ? () async {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Seeding 120 synthetic claims into SQLite...'),
+                          duration: Duration(seconds: 1),
+                          behavior: SnackBarBehavior.floating,
+                        ),
+                      );
+                      final count = await DebugClaimSeeder.seedSyntheticClaims();
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('Debug: $count synthetic claims seeded into SQLite.'),
+                            backgroundColor: AppColors.darkGreen,
+                            behavior: SnackBarBehavior.floating,
+                          ),
+                        );
+                      }
+                    }
+                  : null,
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.shield_outlined,
+                    color: Colors.white,
+                    size: 22,
+                  ),
+                  SizedBox(width: 8),
+                  Text(
+                    'MayDay',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 20,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                ],
               ),
             ),
             const Spacer(),
@@ -293,7 +474,8 @@ class _MainScreenState extends State<MainScreen> {
                     _updatePinScreenPositions();
                   },
                   onCameraIdle: () {
-                    _updatePinScreenPositions();
+                    // Debounced — coalesces rapid idle events during fling/deceleration.
+                    _scheduleProjection();
                   },
                 )
               : Center(
@@ -334,23 +516,24 @@ class _MainScreenState extends State<MainScreen> {
   /// Builds Positioned widgets for each individual pin and cluster.
   List<Widget> _buildPinOverlayWidgets() {
     final List<Widget> widgets = [];
-    final pixelRatio = MediaQuery.of(context).devicePixelRatio;
 
-    // Individual pins
+    // Individual pins — keyed by ValueKey(claim.id) to update in-place without flickering
     for (final item in _renderedPins) {
-      debugPrint(
-        '[MainScreen] raw screenPoint: (${item.screenPoint.x}, ${item.screenPoint.y}), '
-        'logical: (${(item.screenPoint.x / pixelRatio).toStringAsFixed(1)}, ${(item.screenPoint.y / pixelRatio).toStringAsFixed(1)}), '
-        'devicePixelRatio: $pixelRatio',
-      );
-      final logicalX = item.screenPoint.x / pixelRatio;
-      final logicalY = item.screenPoint.y / pixelRatio;
+      final logicalX = item.screenPoint.x.toDouble();
+      final logicalY = item.screenPoint.y.toDouble();
+      final double halfWidth = _pinHalfExtent(item.claim.type);
+      final double halfHeight = switch (item.claim.type) {
+        ClaimType.sos || ClaimType.sosProxy => 24.0,
+        ClaimType.hazardReport || ClaimType.resource => 18.0,
+      };
 
       widgets.add(
         Positioned(
-          left: logicalX - 24,
-          top: logicalY - 24,
+          key: ValueKey('pos_${item.claim.id}'),
+          left: logicalX - halfWidth,
+          top: logicalY - halfHeight,
           child: ClaimPinWidget(
+            key: ValueKey(item.claim.id),
             claim: item.claim,
             onTap: () {
               ClaimDetailSheet.show(context, item.claim);
@@ -362,14 +545,17 @@ class _MainScreenState extends State<MainScreen> {
 
     // Clustered pins at low zoom
     for (final cluster in _renderedClusters) {
-      final logicalX = cluster.screenPoint.x / pixelRatio;
-      final logicalY = cluster.screenPoint.y / pixelRatio;
+      final logicalX = cluster.screenPoint.x.toDouble();
+      final logicalY = cluster.screenPoint.y.toDouble();
+      final clusterId = cluster.claims.map((c) => c.id).join('_');
 
       widgets.add(
         Positioned(
+          key: ValueKey('cluster_pos_$clusterId'),
           left: logicalX - 40,
           top: logicalY - 18,
           child: ClusterPinWidget(
+            key: ValueKey('cluster_$clusterId'),
             claims: cluster.claims,
             onTap: () {
               ClaimDetailSheet.showCluster(context, cluster.claims);

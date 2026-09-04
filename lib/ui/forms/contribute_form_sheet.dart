@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:mayday/common/device_id.dart';
 import 'package:mayday/ui/models/models.dart';
 import 'package:mayday/ui/theme/app_theme.dart';
 
@@ -10,7 +11,7 @@ import 'package:mayday/ui/theme/app_theme.dart';
 /// Features:
 /// - Category selector: foodWater | shelter | medical | equipment (canonical four)
 /// - Pledged count: numeric input (volunteer-written authoritative count)
-/// - On submit: constructs ResourcePayload and prints to console
+/// - On submit: constructs ResourcePayload, creates Claim via ClaimFactory, and persists via ClaimRepository
 class ContributeFormSheet extends StatefulWidget {
   final GeoPoint initialLocation;
 
@@ -57,8 +58,9 @@ class _ContributeFormSheetState extends State<ContributeFormSheet> {
     });
   }
 
-  void _submitForm() {
+  Future<void> _submitForm() async {
     final count = _parsedCount;
+    final deviceId = await LocalDeviceId.getDeviceId();
 
     final payload = ResourcePayload(
       location: widget.initialLocation,
@@ -67,23 +69,24 @@ class _ContributeFormSheetState extends State<ContributeFormSheet> {
       claimedReports: 0,
     );
 
-    // Print constructed payload to console — Week 1 scope
-    debugPrint('════════════════════════════════════════════════════════════');
-    debugPrint('[MayDay Form] SUBMITTED RESOURCE CLAIM:');
-    debugPrint('  Payload Class: ResourcePayload');
-    debugPrint('  Location: (${payload.location.lat}, ${payload.location.lon})');
-    debugPrint('  Category: ${payload.category.name}');
-    debugPrint('  Pledged Count (Authoritative): ${payload.pledgedCount}');
-    debugPrint('  Claimed Reports: ${payload.claimedReports}');
-    debugPrint('  Available (Computed): ${payload.available}');
-    debugPrint('════════════════════════════════════════════════════════════');
+    // Assemble real Claim via ClaimFactory — PERSON_C.md Week 2 Day 1
+    final claim = await ClaimFactory.createClaim(
+      payload: payload,
+      originDeviceId: deviceId,
+    );
 
+    // TODO: SIGNING GAP — Claim originated with placeholder signature (Uint8List(0)).
+    // Real Ed25519 signing over claim.toSignedCoreCbor() is blocked on Phase 4
+    // identity/keypair work (lib/identity/). See CLAIM_SCHEMA.md §5 and PERSON_C.md Week 2 Day 1.
+    await ClaimRepository().insertClaim(claim);
+
+    if (!mounted) return;
     Navigator.pop(context);
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          'Pledged $count units of ${_categoryLabel(_category)} (Console log)',
+          'Pledged and registered $count units of ${_categoryLabel(_category)}',
           style: const TextStyle(fontWeight: FontWeight.w600),
         ),
         backgroundColor: AppColors.darkGreen,

@@ -8,7 +8,7 @@ import 'package:mayday/ui/theme/app_theme.dart';
 /// - Distinct icon & styling per ClaimType (SOS, Proxy SOS, Hazard, Resource).
 /// - Trust tier appearance: UNCONFIRMED (faint/0.55 opacity), CORROBORATED (full opacity),
 ///   GROUND_CONFIRMED (distinct double-ring + verified shield badge). Read directly from
-///   MockClaim.claimTrust. — CLAIM_SCHEMA.md §3.
+///   Claim.claimTrust. — CLAIM_SCHEMA.md §3.
 /// - Aging SOS: gets MORE visual urgency over time (pulsing animation, beacon halo),
 ///   scaled continuously across three tiers (1hr / 3hr / 6hr+) —
 ///   never fades. — CLAUDE.md §2.3.
@@ -18,7 +18,7 @@ import 'package:mayday/ui/theme/app_theme.dart';
 ///   blocked on B's replica-conflict data (CLAIM_SCHEMA.md §8.1) — not available
 ///   in Week 1 mock data.
 class ClaimPinWidget extends StatefulWidget {
-  final MockClaim claim;
+  final Claim claim;
   final VoidCallback onTap;
 
   const ClaimPinWidget({
@@ -43,7 +43,7 @@ class _ClaimPinWidgetState extends State<ClaimPinWidget>
   int get _agingTier => ClaimDisplayHelpers.agingTier(widget.claim);
 
   /// Bucketed relative-time label for the aging badge.
-  String get _agingLabel => ClaimDisplayHelpers.agingBadgeLabel(widget.claim.mockCreatedAt);
+  String get _agingLabel => ClaimDisplayHelpers.agingBadgeLabel(widget.claim.createdAtLogical);
 
   /// Pulse animation speed scales with aging tier.
   Duration get _pulseDuration => switch (_agingTier) {
@@ -143,52 +143,56 @@ class _ClaimPinWidgetState extends State<ClaimPinWidget>
     }
 
     if (_isAgingSos) {
-      return AnimatedBuilder(
-        animation: _pulseAnimation,
-        builder: (context, child) {
-          return Opacity(
-            opacity: opacity,
-            child: GestureDetector(
-              onTap: widget.onTap,
-              child: Stack(
-                alignment: Alignment.center,
-                clipBehavior: Clip.none,
-                children: [
-                  // Pulsing beacon halo for aging SOS — intensity scales
-                  // with _agingTier (1hr/3hr/6hr+). A 6-hour SOS pulses
-                  // faster and larger than a 1-hour SOS.
-                  Container(
-                    width: 54 * _pulseAnimation.value,
-                    height: 54 * _pulseAnimation.value,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: AppColors.darkRed.withAlpha(_haloAlpha),
-                      border: Border.all(
-                        color: AppColors.darkRed.withAlpha(_haloBorderAlpha),
-                        width: 1.5,
+      return RepaintBoundary(
+        child: AnimatedBuilder(
+          animation: _pulseAnimation,
+          builder: (context, child) {
+            return Opacity(
+              opacity: opacity,
+              child: GestureDetector(
+                onTap: widget.onTap,
+                child: Stack(
+                  alignment: Alignment.center,
+                  clipBehavior: Clip.none,
+                  children: [
+                    // Pulsing beacon halo for aging SOS — intensity scales
+                    // with _agingTier (1hr/3hr/6hr+). A 6-hour SOS pulses
+                    // faster and larger than a 1-hour SOS.
+                    Container(
+                      width: 54 * _pulseAnimation.value,
+                      height: 54 * _pulseAnimation.value,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: AppColors.darkRed.withAlpha(_haloAlpha),
+                        border: Border.all(
+                          color: AppColors.darkRed.withAlpha(_haloBorderAlpha),
+                          width: 1.5,
+                        ),
                       ),
                     ),
-                  ),
-                  pinBody,
-                ],
+                    pinBody,
+                  ],
+                ),
               ),
-            ),
-          );
-        },
+            );
+          },
+        ),
       );
     }
 
-    return Opacity(
-      opacity: opacity,
-      child: GestureDetector(
-        onTap: widget.onTap,
-        child: pinBody,
+    return RepaintBoundary(
+      child: Opacity(
+        opacity: opacity,
+        child: GestureDetector(
+          onTap: widget.onTap,
+          child: pinBody,
+        ),
       ),
     );
   }
 
   // ─── SOS & Proxy SOS Pin ───────────────────────────────────────────
-  Widget _buildSosPin(MockClaim claim, {required bool isProxy}) {
+  Widget _buildSosPin(Claim claim, {required bool isProxy}) {
     final payload = claim.payload;
     final isGroundConfirmed = claim.claimTrust == ClaimTrust.groundConfirmed;
 
@@ -322,7 +326,7 @@ class _ClaimPinWidgetState extends State<ClaimPinWidget>
   }
 
   // ─── Hazard Pin ───────────────────────────────────────────────────
-  Widget _buildHazardPin(MockClaim claim) {
+  Widget _buildHazardPin(Claim claim) {
     final payload = claim.payload as HazardReportPayload;
     final isGroundConfirmed = claim.claimTrust == ClaimTrust.groundConfirmed;
 
@@ -416,7 +420,7 @@ class _ClaimPinWidgetState extends State<ClaimPinWidget>
   }
 
   // ─── Resource Pin ─────────────────────────────────────────────────
-  Widget _buildResourcePin(MockClaim claim) {
+  Widget _buildResourcePin(Claim claim) {
     final payload = claim.payload as ResourcePayload;
     final isGroundConfirmed = claim.claimTrust == ClaimTrust.groundConfirmed;
 
@@ -503,7 +507,7 @@ class _ClaimPinWidgetState extends State<ClaimPinWidget>
 /// Clustered pin marker rendered at low zoom — CLAIM_SCHEMA.md §2, PERSON_C.md §6.
 /// Display-only grouping; underlying records stay separate.
 class ClusterPinWidget extends StatelessWidget {
-  final List<MockClaim> claims;
+  final List<Claim> claims;
   final VoidCallback onTap;
 
   const ClusterPinWidget({

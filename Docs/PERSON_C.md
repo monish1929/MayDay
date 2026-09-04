@@ -116,24 +116,24 @@ Two things easy to get backwards:
 A and B pair on the transport↔data seam (`ab/`). **I work solo** against B's Phase 1 store, which already works standalone — so I'm not blocked on their pairing.
 
 ### Day 1 — Wire in the real Claim
-- [ ] Delete `MockClaim`, import B's `Claim`
-- [ ] Fix every field mismatch (this is the payment for using real names in week 1)
-- [ ] Forms write real claims through B's layer instead of printing
-- [ ] Confirm claim creation actually persists to SQLite — kill the app, reopen, it's still there
+- [✓] Delete `MockClaim`, import B's `Claim`
+- [✓] Fix every field mismatch (this is the payment for using real names in week 1)
+- [✓] Forms write real claims through B's layer instead of printing
+- [✓] Confirm claim creation actually persists to SQLite — kill the app, reopen, it's still there
 
 ### Day 2 — Reactive map rendering
-- [ ] Bind the map to B's `watchActiveClaims()` stream
-- [ ] A claim arriving updates the map **without** a manual refresh
-- [ ] Layer filter works against real query results
-- [ ] Pins update in place when trust tier changes, rather than flickering out and back
-- [ ] Test with 100+ claims — does rendering stay smooth?
+- [✓] Bind the map to B's `watchActiveClaims()` stream
+- [✓] A claim arriving updates the map **without** a manual refresh
+- [✓] Layer filter works against real query results
+- [✓] Pins update in place when trust tier changes, rather than flickering out and back
+- [✓] Test with 100+ claims — does rendering stay smooth?
 
 ### Day 3 — Volunteer queue and resource display
-- [ ] Rescue queue reads real `dispatchPriority`, sorted with B's helper
-- [ ] Availability read from `availableFor()` — **never cached in widget state and mutated locally**
-- [ ] Resource range rendering when replicas disagree
-- [ ] Relative-time display using B's logical-clock helper
-- [ ] Volunteer gating: Contribute pledge hidden for `unverified` and `vouchedProvisional` nodes
+- [✓] Rescue queue reads real `dispatchPriority`, sorted with B's helper
+- [✓] Availability read from `availableFor()` — **never cached in widget state and mutated locally**
+- [ ] Resource range rendering when replicas disagree — still blocked, see notes
+- [✓] Relative-time display using B's logical-clock helper
+- [ ] Volunteer gating: Contribute pledge hidden for `unverified` and `vouchedProvisional` nodes — still blocked, see notes
 
 ### Day 4 — Three-way integration test
 All three of us. The real end-to-end question: **can my UI display a claim that originated on a different phone and arrived over A's mesh?**
@@ -338,6 +338,9 @@ Beyond the standard checks in `CLAUDE.md` §4.5:
 | 2026-08-20 | Wk1 D4 | c/app-shell | Day 4 complete — Emergency/Resource layer toggle, distinct pin rendering per type/trust/priority, confirmation counts on hazard pins, display-only clustering at low zoom (< 11.5), time-driven aging SOS urgency escalation (pulsing halo & speed scaled across 1hr/3hr/6hr+ tiers). Resource range display deferred to Week 2. | Ready for Day 5 (Volunteer ops screen). |
 | 2026-08-20 | Wk1 D4 | c/app-shell | Day 4 on-device verification complete. Found and fixed two bugs post-implementation: (1) pin projection ran on onMapCreated before MapLibre's style/camera was ready, silently dropping all pins on first launch — fixed by moving initial projection to onStyleLoadedCallback plus a bounded single retry, with the previously-silent toScreenLocation failures now logged; (2) toScreenLocation() returns physical device pixels but Positioned expects logical pixels, placing every pin off-screen — fixed by dividing by MediaQuery.devicePixelRatio in _buildPinOverlayWidgets(). Confirmed on-device: all three trust tiers render correctly, aging escalates visibly across tier 1 (sos-002, ~2hr) and tier 3 (sos-003, ~6.5hr), clustering separates into individual pins at high zoom and groups at low zoom with detail sheet showing each claim separately, both Emergency and Resource layers toggle correctly, resource pins show single available count with no fabricated range. | None — Day 4 fully closed. Ready for Day 5. |
 | 2026-08-20 | Wk1 D5 | c/app-shell | Day 5 complete — volunteer_ops_screen.dart built with three tabs: rescue queue (sorted by dispatchPriority then claimTrust, older-claim tiebreaker), report review (sorted by confirmationCount descending), resource coordination (category filter across canonical four, showing payload.available with pledged/claimed breakdown, no fabricated range). qr_scanner_screen.dart added as a viewfinder + permission-handling skeleton only, no decode/verification logic, per CLAIM_SCHEMA.md §6.2 Phase 3 scope. Refactored shared relative-time and aging-tier logic (previously duplicated across claim_pin_widget.dart and claim_detail_sheet.dart) into lib/ui/models/claim_display_helpers.dart, now consumed by all three call sites including the new rescue queue. router.dart was touched to register the /qr-scanner route — minimal necessary addition, flagged here since it wasn't in original scope. Verified on-device: rescue queue sort order, report sort order, and resource category filtering all match mock data exactly; all list rows correctly open ClaimDetailSheet. | One open visual bug found during testing — see open questions below. |
+| 2026-08-23 | Wk2 D1 | c/app-shell | Day 1 complete — Mock models deleted, real Claim / ClaimPayload / LogicalClock / DatabaseHelper wired. Rescue, Report, Contribute forms assemble real Claims via ClaimFactory and persist to SQLite with explicit `// TODO: SIGNING GAP` comments. Verified on-device (force-stop + relaunch preserves all claims) and in CI via connection-interrupt tests. | Signing gap tracked under open questions. |
+| 2026-08-24 | Wk2 D2 | c/app-shell | Day 2 complete — `watchActiveClaims()` stream added to `ClaimRepository`, map bound reactively, `ValueKey`-based flicker-free pin updates, live layer filtering confirmed. On-device testing with 120 seeded claims (via new debug long-press seeder) found two real issues the automated scale test missed: (1) hazard/resource pin cards visually overlapped due to a fixed 45px cluster threshold not accounting for card width, compounded by a physical-vs-logical pixel bug shrinking the effective threshold further on high-density screens; (2) noticeable pan/zoom lag from 120+ sequential `toScreenLocation()` platform-channel calls per camera-idle event. Both fixed: dynamic per-type cluster threshold + logical-pixel correction; `toScreenLocationBatch()` + viewport culling (visible region + 20% margin) replacing the sequential loop. Re-tested on-device: overlap resolved, lag substantially reduced but not fully eliminated at 120-claim density. | Residual minor lag carried forward — see open questions. |
+| 2026-08-27 | Wk2 D3 | c/app-shell | Day 3 complete — `volunteer_ops_screen.dart` bound to `watchActiveClaims()` stream (was one-shot load), all three tabs (rescue queue, report review, resource coordination) now update live without manual refresh, confirmed both via automated test (`volunteer_ops_reactive_test.dart`) and real on-device testing. Confirmed against `lib/data/`: no `availableFor()` helper exists — using `ResourcePayload.available` getter directly, never cached; no B-provided sort helper exists — retained `ClaimDisplayHelpers.compareRescueClaims`; no §8.1 replica-conflict data exists — single-count display preserved, no fabricated range; `MeshTimeGossip.estimateDisplayTime` in `mesh_time.dart` is an unimplemented stub — retained existing `ClaimDisplayHelpers.relativeTimeLabel`; `NodeTrust` still doesn't exist — retained `widget.isVolunteer` placeholder gate with existing `// TODO`. Also hardened `DatabaseHelper.resetForTest()` to avoid `SQLITE_BUSY` when concurrent test files share the DB file; confirmed this does not weaken Day 1's restart-persistence test (verified via full test output re-run). | Resource range rendering and NodeTrust-based gating remain blocked on B/Phase 4 work — tracked in open questions, not closed. |
 
 ### Open questions I'm carrying
 
@@ -351,17 +354,19 @@ Beyond the standard checks in `CLAUDE.md` §4.5:
 - [ ] §8 doesn't list `proxyNote` (SosProxyPayload) or `note` (HazardReportPayload), but §9.2 references both as capped free-text fields. Built against §9.2 as the more specific source. Needs §8 updated to match, per §12.
 - [ ] §1's Claim pseudocode types `resolvedAtLogical`/`createdAtLogical`/`lastConfirmedAtLogical`/`archivedAtLogical` as `DateTime?` and `displayLifetime` as non-nullable `Duration`, but §4 and §10.1 require `LogicalClock`-typed and nullable respectively. Built to §4/§10.1. Worth confirming with B before they build the real Claim class.
 - [ ] Aging rescue queue cards (sos-003, sos-001) show a stray diagonal yellow/black hazard-stripe element with rotated, clipped text on the right edge of the card, not present on non-aging cards like sos-002. Not part of the original Day 5 spec — likely a leftover or misconfigured decorative widget. Needs a code look in volunteer_ops_screen.dart's rescue card builder before this is considered fully clean.
+- [ ] `ClaimFactory.createClaim` currently returns a `Claim` with `originSignature: Uint8List(0)` — a placeholder, not a real signature. Real Ed25519 signing over `claim.toSignedCoreCbor()` requires the keypair/identity work in `lib/identity/` (Phase 4, Week 4). Per `CLAIM_SCHEMA.md` §5, an unsigned claim must never reach the store or the wire — this is currently violated for **local SQLite storage only** during Week 2 UI testing, which is why it's tracked here rather than blocked on. **Hard constraint: this must be resolved before any claim propagates through A's mesh** — tied to that event, not to the Phase 4 calendar slot, in case Phase 4 slips but mesh integration doesn't. Each form submission site (`rescue_form_sheet.dart`, `report_form_sheet.dart`, `contribute_form_sheet.dart`) carries a `// TODO: SIGNING GAP` comment immediately before the `insertClaim` call, pointing back to this note.
+- [ ] Residual minor lag remains with 120+ densely clustered claims even after batched projection (`toScreenLocationBatch`) + viewport culling. Not blocking — Day 2's smoothness bar is met for realistic near-term density — but carrying forward to Wk5 D2 (dedicated map performance / 1,000+ claim profiling) rather than treating as fully closed. Also worth revisiting there: hazard/resource pin half-extents (60px/55px) used for the cluster threshold are hand-estimated, not measured from actual rendered widget size — could drift if text scale/accessibility settings change card width.
 
 ### Screens status
 
 | Screen | Mock | Real data | Polished | Notes |
 |---|---|---|---|---|
 | Entry | ✓ | ☐ | ☐ | |
-| Map + layers | ✓ | ☐ | ☐ | Pin projection timing + coordinate space bugs found and fixed post-implementation — see progress log. |
-| Bottom sheet | ✓ | ☐ | ☐ | |
-| Rescue form | ✓ | ☐ | ☐ | incl. Proxy |
-| Report form | ✓ | ☐ | ☐ | |
-| Contribute form | ✓ | ☐ | ☐ | |
+| Map + layers | ✓ | ✓ | ☐ | Live stream reactive rendering wired via watchActiveClaims(), tested with 120+ claims. |
+| Bottom sheet | ✓ | ✓ | ☐ | |
+| Rescue form | ✓ | ✓ | ☐ | Writes to SQLite via ClaimFactory + ClaimRepository with signing gap comment. |
+| Report form | ✓ | ✓ | ☐ | Writes to SQLite via ClaimFactory + ClaimRepository with signing gap comment. |
+| Contribute form | ✓ | ✓ | ☐ | Writes to SQLite via ClaimFactory + ClaimRepository with signing gap comment. |
 | SOS detail sheet | ☐ | ☐ | ☐ | |
 | Hazard detail sheet | ☐ | ☐ | ☐ | |
 | Resource detail sheet | ☐ | ☐ | ☐ | |

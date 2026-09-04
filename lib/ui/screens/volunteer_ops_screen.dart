@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:mayday/ui/map/claim_detail_sheet.dart';
 import 'package:mayday/ui/models/models.dart';
@@ -25,11 +26,38 @@ class VolunteerOpsScreen extends StatefulWidget {
 class _VolunteerOpsScreenState extends State<VolunteerOpsScreen> {
   // Selected category filter for the Resource coordination tab (null = All)
   ResourceCategory? _selectedResourceCategory;
+  StreamSubscription<List<Claim>>? _claimsSubscription;
+  List<Claim> _allClaims = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _subscribeToClaims();
+  }
+
+  void _subscribeToClaims() {
+    _claimsSubscription = ClaimRepository().watchActiveClaims().listen(
+      (claims) {
+        if (!mounted) return;
+        setState(() {
+          _allClaims = claims;
+        });
+      },
+      onError: (e) {
+        debugPrint('[VolunteerOpsScreen] Error from watchActiveClaims: $e');
+      },
+    );
+  }
+
+  @override
+  void dispose() {
+    _claimsSubscription?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    // Generate mock claims for Week 1 — will be replaced by B's live SQLite queries in Week 2
-    final allClaims = MockData.generateMockClaims();
+    final allClaims = _allClaims;
 
     // ─── 1. Rescue Queue (active SOS / SOS_PROXY) ───────────────────
     final rescueClaims = allClaims
@@ -136,7 +164,7 @@ class _VolunteerOpsScreenState extends State<VolunteerOpsScreen> {
   // ═══════════════════════════════════════════════════════════════════
   Widget _buildRescueQueueTab(
     BuildContext context,
-    List<MockClaim> claims,
+    List<Claim> claims,
   ) {
     if (claims.isEmpty) {
       return _buildEmptyState(
@@ -156,7 +184,7 @@ class _VolunteerOpsScreenState extends State<VolunteerOpsScreen> {
         final isAging = ClaimDisplayHelpers.isAgingSos(claim);
         final trust = ClaimDisplayHelpers.trustConfig(claim.claimTrust);
         final priority = ClaimDisplayHelpers.priorityConfig(claim.dispatchPriority);
-        final relTime = ClaimDisplayHelpers.relativeTimeLabel(claim.mockCreatedAt);
+        final relTime = ClaimDisplayHelpers.relativeTimeLabel(claim.createdAtLogical);
 
         return InkWell(
           onTap: () => ClaimDetailSheet.show(context, claim),
@@ -299,7 +327,7 @@ class _VolunteerOpsScreenState extends State<VolunteerOpsScreen> {
     );
   }
 
-  Widget _buildRescueDetailsRow(MockClaim claim) {
+  Widget _buildRescueDetailsRow(Claim claim) {
     if (claim.payload is SosPayload) {
       final p = claim.payload as SosPayload;
       return Row(
@@ -392,7 +420,7 @@ class _VolunteerOpsScreenState extends State<VolunteerOpsScreen> {
   // ═══════════════════════════════════════════════════════════════════
   Widget _buildReportReviewTab(
     BuildContext context,
-    List<MockClaim> claims,
+    List<Claim> claims,
   ) {
     if (claims.isEmpty) {
       return _buildEmptyState(
@@ -411,7 +439,7 @@ class _VolunteerOpsScreenState extends State<VolunteerOpsScreen> {
         final payload = claim.payload as HazardReportPayload;
         final trust = ClaimDisplayHelpers.trustConfig(claim.claimTrust);
         final priority = ClaimDisplayHelpers.priorityConfig(claim.dispatchPriority);
-        final relTime = ClaimDisplayHelpers.relativeTimeLabel(claim.mockCreatedAt);
+        final relTime = ClaimDisplayHelpers.relativeTimeLabel(claim.createdAtLogical);
 
         return InkWell(
           onTap: () => ClaimDetailSheet.show(context, claim),
@@ -567,7 +595,7 @@ class _VolunteerOpsScreenState extends State<VolunteerOpsScreen> {
   // ═══════════════════════════════════════════════════════════════════
   Widget _buildResourceCoordinationTab(
     BuildContext context,
-    List<MockClaim> claims,
+    List<Claim> claims,
   ) {
     return Column(
       children: [
@@ -631,7 +659,7 @@ class _VolunteerOpsScreenState extends State<VolunteerOpsScreen> {
                     final payload = claim.payload as ResourcePayload;
                     final trust = ClaimDisplayHelpers.trustConfig(claim.claimTrust);
                     final priority = ClaimDisplayHelpers.priorityConfig(claim.dispatchPriority);
-                    final relTime = ClaimDisplayHelpers.relativeTimeLabel(claim.mockCreatedAt);
+                    final relTime = ClaimDisplayHelpers.relativeTimeLabel(claim.createdAtLogical);
 
                     return InkWell(
                       onTap: () => ClaimDetailSheet.show(context, claim),

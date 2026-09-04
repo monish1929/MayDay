@@ -4,22 +4,22 @@ import 'package:mayday/ui/theme/app_theme.dart';
 
 /// Bottom sheet displaying the details of a tapped claim or cluster — PERSON_C.md §3 Day 4.
 class ClaimDetailSheet extends StatelessWidget {
-  final MockClaim? singleClaim;
-  final List<MockClaim>? clusterClaims;
+  final Claim? singleClaim;
+  final List<Claim>? clusterClaims;
 
   const ClaimDetailSheet.single({
     super.key,
-    required MockClaim claim,
+    required Claim claim,
   })  : singleClaim = claim,
         clusterClaims = null;
 
   const ClaimDetailSheet.cluster({
     super.key,
-    required List<MockClaim> claims,
+    required List<Claim> claims,
   })  : singleClaim = null,
         clusterClaims = claims;
 
-  static Future<void> show(BuildContext context, MockClaim claim) {
+  static Future<void> show(BuildContext context, Claim claim) {
     return showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -28,7 +28,7 @@ class ClaimDetailSheet extends StatelessWidget {
     );
   }
 
-  static Future<void> showCluster(BuildContext context, List<MockClaim> claims) {
+  static Future<void> showCluster(BuildContext context, List<Claim> claims) {
     return showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -49,7 +49,7 @@ class ClaimDetailSheet extends StatelessWidget {
   }
 
   Widget _buildClusterView(
-      BuildContext context, List<MockClaim> claims, double bottomInset) {
+      BuildContext context, List<Claim> claims, double bottomInset) {
     return Container(
       padding: EdgeInsets.fromLTRB(20, 12, 20, 24 + bottomInset),
       decoration: const BoxDecoration(
@@ -120,7 +120,7 @@ class ClaimDetailSheet extends StatelessWidget {
   }
 
   Widget _buildSingleClaimView(
-      BuildContext context, MockClaim claim, double bottomInset) {
+      BuildContext context, Claim claim, double bottomInset) {
     return Container(
       padding: EdgeInsets.fromLTRB(20, 12, 20, 24 + bottomInset),
       decoration: const BoxDecoration(
@@ -154,7 +154,7 @@ class ClaimDetailSheet extends StatelessWidget {
     );
   }
 
-  Widget _buildSingleClaimHeader(BuildContext context, MockClaim claim) {
+  Widget _buildSingleClaimHeader(BuildContext context, Claim claim) {
     final (title, icon, color, bg) = switch (claim.type) {
       ClaimType.sos => ('SOS Rescue Request', Icons.sos_rounded, AppColors.darkRed, AppColors.redLight),
       ClaimType.sosProxy => ('Proxy SOS Request', Icons.person_pin_circle_outlined, AppColors.darkRed, AppColors.redLight),
@@ -206,7 +206,7 @@ class ClaimDetailSheet extends StatelessWidget {
     );
   }
 
-  Widget _buildClaimCard(MockClaim claim) {
+  Widget _buildClaimCard(Claim claim) {
     final trustConfig = ClaimDisplayHelpers.trustConfig(claim.claimTrust);
     final priorityConfig = ClaimDisplayHelpers.priorityConfig(claim.dispatchPriority);
 
@@ -227,11 +227,8 @@ class ClaimDetailSheet extends StatelessWidget {
               const SizedBox(width: 6),
               _buildBadge(priorityConfig.label, priorityConfig.fg, priorityConfig.bg, priorityConfig.border),
               const Spacer(),
-              // Bucketed relative time from mockCreatedAt — CLAIM_SCHEMA.md §4.
-              // Never a precise timestamp. mockCreatedAt is a Week-1-only
-              // proxy; real relative time comes from mesh time gossip in Week 2.
               Text(
-                ClaimDisplayHelpers.relativeTimeLabel(claim.mockCreatedAt),
+                ClaimDisplayHelpers.relativeTimeLabel(claim.createdAtLogical),
                 style: const TextStyle(
                   color: AppColors.secondaryText,
                   fontSize: 11,
@@ -283,9 +280,7 @@ class ClaimDetailSheet extends StatelessWidget {
     );
   }
 
-  Widget _buildSosDetails(SosPayload payload, MockClaim claim) {
-    // Time-based aging check — NOT hardcoded to a specific claim ID.
-    // Uses mockCreatedAt (Week-1-only wall-clock proxy for mesh time gossip).
+  Widget _buildSosDetails(SosPayload payload, Claim claim) {
     final isAging = ClaimDisplayHelpers.isAgingSos(claim);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -321,7 +316,7 @@ class ClaimDetailSheet extends StatelessWidget {
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
-                    'Aging SOS: Unresolved for ${ClaimDisplayHelpers.relativeTimeLabel(claim.mockCreatedAt)}. Higher response urgency.',
+                    'Aging SOS: Unresolved for ${ClaimDisplayHelpers.relativeTimeLabel(claim.createdAtLogical)}. Higher response urgency.',
                     style: const TextStyle(
                       color: AppColors.darkRed,
                       fontSize: 11,
@@ -337,7 +332,7 @@ class ClaimDetailSheet extends StatelessWidget {
     );
   }
 
-  Widget _buildProxyDetails(SosProxyPayload payload, MockClaim claim) {
+  Widget _buildProxyDetails(SosProxyPayload payload, Claim claim) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [

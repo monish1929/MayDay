@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:mayday/common/device_id.dart';
 import 'package:mayday/ui/models/models.dart';
 import 'package:mayday/ui/theme/app_theme.dart';
 
@@ -57,8 +58,9 @@ class _RescueFormSheetState extends State<RescueFormSheet> {
     });
   }
 
-  void _submitForm() {
+  Future<void> _submitForm() async {
     final location = widget.initialLocation;
+    final deviceId = await LocalDeviceId.getDeviceId();
     ClaimPayload payload;
 
     switch (_rescueType) {
@@ -79,36 +81,33 @@ class _RescueFormSheetState extends State<RescueFormSheet> {
         final note = rawNote.isEmpty ? null : rawNote;
         payload = SosProxyPayload(
           location: location,
-          reporterDeviceId: 'local-device-01',
+          reporterDeviceId: deviceId,
           headcount: _headcountBucket,
           proxyNote: note,
         );
         break;
     }
 
-    // Print constructed payload to console — Week 1 scope
-    debugPrint('════════════════════════════════════════════════════════════');
-    debugPrint('[MayDay Form] SUBMITTED RESCUE CLAIM:');
-    debugPrint('  Type: ${_rescueType.name}');
-    debugPrint('  Payload Class: ${payload.runtimeType}');
-    debugPrint('  Location: (${payload.location.lat}, ${payload.location.lon})');
-    if (payload is SosPayload) {
-      debugPrint('  Headcount: ${payload.headcount?.name ?? 'none (Individual)'}');
-    } else if (payload is SosProxyPayload) {
-      debugPrint('  Reporter Device ID: ${payload.reporterDeviceId}');
-      debugPrint('  Headcount: ${payload.headcount?.name ?? 'none specified'}');
-      debugPrint('  Proxy Note: "${payload.proxyNote ?? ''}"');
-    }
-    debugPrint('════════════════════════════════════════════════════════════');
+    // Assemble real Claim via ClaimFactory — PERSON_C.md Week 2 Day 1
+    final claim = await ClaimFactory.createClaim(
+      payload: payload,
+      originDeviceId: deviceId,
+    );
 
+    // TODO: SIGNING GAP — Claim originated with placeholder signature (Uint8List(0)).
+    // Real Ed25519 signing over claim.toSignedCoreCbor() is blocked on Phase 4
+    // identity/keypair work (lib/identity/). See CLAIM_SCHEMA.md §5 and PERSON_C.md Week 2 Day 1.
+    await ClaimRepository().insertClaim(claim);
+
+    if (!mounted) return;
     Navigator.pop(context);
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
           _rescueType == RescueType.proxy
-              ? 'Proxy SOS broadcast signal generated (Console log)'
-              : 'Rescue SOS broadcast signal generated (Console log)',
+              ? 'Proxy SOS broadcast signal registered and saved'
+              : 'Rescue SOS broadcast signal registered and saved',
           style: const TextStyle(fontWeight: FontWeight.w600),
         ),
         backgroundColor: AppColors.darkRed,
