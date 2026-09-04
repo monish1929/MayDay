@@ -209,4 +209,71 @@ void main() {
       const Duration(hours: 48),
     );
   });
+
+  group('an unsigned claim never reaches the store (§5)', () {
+    Claim unsignedClaim(Uint8List signature) => Claim(
+          id: 'unsigned-claim',
+          type: ClaimType.hazardReport,
+          originDeviceId: 'device-a',
+          originSequence: 1,
+          originSignature: signature,
+          logicalClock: const LogicalClock(deviceId: 'device-a', counter: 1),
+          claimTrust: ClaimTrust.unconfirmed,
+          dispatchPriority: DispatchPriority.low,
+          status: ClaimStatus.active,
+          hopLimit: 10,
+          displayLifetime: const Duration(hours: 48),
+          createdAtLogical:
+              const LogicalClock(deviceId: 'device-a', counter: 1),
+          payload: const HazardReportPayload(
+            location: GeoPoint(lat: 1, lon: 2),
+            hazardType: HazardType.flood,
+            confirmationCount: 1,
+          ),
+        );
+
+    test('insertClaim refuses the empty ClaimFactory placeholder', () async {
+      // The exact local-path mistake: build a claim, skip signing, store it.
+      // Before this guard the row landed and rendered like any other.
+      await expectLater(
+        repo.insertClaim(unsignedClaim(Uint8List(0))),
+        throwsA(isA<UnsignedClaimException>()),
+      );
+      expect(await repo.getClaim('unsigned-claim'), isNull);
+    });
+
+    test('insertClaim refuses a truncated signature', () async {
+      // 63 bytes is not "nearly signed". Ed25519 signatures are exactly 64,
+      // so anything else is malformed rather than merely unlucky.
+      await expectLater(
+        repo.insertClaim(unsignedClaim(Uint8List(63))),
+        throwsA(isA<UnsignedClaimException>()),
+      );
+      expect(await repo.getClaim('unsigned-claim'), isNull);
+    });
+
+    test('updateClaim cannot strip the signature off a stored claim',
+        () async {
+      // The write path is not only insert. A claim that entered the store
+      // signed must not be able to leave a later update unsigned.
+      final signed = unsignedClaim(_sig(0xAB));
+      await repo.insertClaim(signed);
+
+      signed.originSignature = Uint8List(0);
+      await expectLater(
+        repo.updateClaim(signed),
+        throwsA(isA<UnsignedClaimException>()),
+      );
+
+      final held = await repo.getClaim('unsigned-claim');
+      expect(held!.originSignature.length, 64);
+    });
+
+    test('a properly signed claim still stores', () async {
+      // The guard must reject the unsigned case without narrowing the honest
+      // one — including signatures full of 0x00 bytes, which are valid.
+      await repo.insertClaim(unsignedClaim(_sig(0x00)));
+      expect(await repo.getClaim('unsigned-claim'), isNotNull);
+    });
+  });
 }

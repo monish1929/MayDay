@@ -7,8 +7,36 @@ import 'package:mayday/data/models/claim_payload.dart';
 import 'package:mayday/data/models/corroboration.dart';
 import 'package:mayday/data/enums.dart';
 import 'package:mayday/data/database/database_helper.dart';
+import 'package:mayday/identity/signature.dart';
 
 import 'package:mayday/data/identity/geohash_utils.dart';
+
+/// Thrown when a write is attempted with a claim whose signature is not the
+/// shape an Ed25519 signature has.
+///
+/// A real exception rather than an `assert`: asserts are compiled out of a
+/// release build, and this is the one guard standing between a bug in calling
+/// code and an unsigned claim sitting in the store looking exactly like a real
+/// one (CLAIM_SCHEMA.md §5, CLAUDE.md §2.5).
+class UnsignedClaimException implements Exception {
+  /// The claim that was refused. Named so the failure points at a record
+  /// rather than just a stack trace.
+  final String claimId;
+
+  /// What the caller actually supplied. Zero means `ClaimFactory`'s unsigned
+  /// placeholder went straight to the store without being signed at
+  /// origination — the specific mistake this guard exists to catch.
+  final int actualLength;
+
+  const UnsignedClaimException(this.claimId, this.actualLength);
+
+  @override
+  String toString() => 'UnsignedClaimException: claim $claimId carries a '
+      '$actualLength-byte signature, but §5 requires '
+      '${ClaimSignature.signatureLength}. An unsigned claim must never reach '
+      'the store. Sign at origination (MeshNode.originate) and rebuild the '
+      'local copy from the signed bytes.';
+}
 
 class ClaimRepository {
   final DatabaseHelper _dbHelper = DatabaseHelper.instance;
@@ -119,6 +147,29 @@ class ClaimRepository {
   }
 
   Map<String, dynamic> _toMap(Claim claim) {
+    // An unsigned claim must never reach the store — CLAIM_SCHEMA.md §5,
+    // CLAUDE.md §2.5.
+    //
+    // Checked here, inside _toMap, rather than at each public write. This is
+    // the single point every write already passes through, so a call site
+    // added later is covered without anyone having to remember the rule. A
+    // guard that depends on being remembered is the kind that survives right
+    // up until someone adds a fourth caller.
+    //
+    // Deliberately a SHAPE check and not a verification, and the difference
+    // matters: verifying needs the originating public key, and a Claim does
+    // not carry one — `originDeviceId` is a hash of it, not the key itself.
+    // Real signature verification happens at the hop, in `mesh/`
+    // (CLAIM_SCHEMA.md §9.3 step 2), and that remains the only place a
+    // signature is proven good. What this stops is the LOCAL path, which has
+    // no verification step at all: a claim built by `ClaimFactory` — which
+    // returns an empty signature by design, expecting the caller to sign it —
+    // being handed straight to the store, never signed, and then rendered,
+    // merged and corroborated exactly like a real one.
+    if (claim.originSignature.length != ClaimSignature.signatureLength) {
+      throw UnsignedClaimException(claim.id, claim.originSignature.length);
+    }
+
     // Declared on the sealed base, so a new payload type is a compile error
     // rather than a silent (0, 0) fallback.
     final location = claim.payload.location;
