@@ -326,6 +326,7 @@ Beyond the standard checks in `CLAUDE.md` §4.5:
 | Day 3 | Wk1 D3 | `b/claim-schema` | Trust engine + tests | Implemented rule set based on §3, tests passing |
 | Day 4 | Wk1 D4 | `b/claim-schema` | Decay & logic clocks | `LogicalClock` Comparable + `MeshTimeGossip` stub |
 | Day 5 | Wk1 D5 | `b/claim-schema` | Simulation harness | Proved merge, anti-echo, and resource flooring logic |
+| 2026-09-04 | Wk2 | `ab/transport-data-wiring` | **Unsigned claims refused at the store boundary (§5).** `ClaimRepository._toMap()` now throws `UnsignedClaimException` unless `originSignature` is exactly 64 bytes, covering `insertClaim` and `updateClaim` alike. Written by A on the pairing branch; flagged to B because `data/` is B's. | Shape check, not verification — a `Claim` carries no public key, so real verification stays at the hop in `mesh/`. Closes the local-write gap ahead of C's form→store wiring (PERSON_C.md Wk2 D1). 4 new tests; 152/152 green, `flutter analyze` clean. |
 
 ### Open questions I'm carrying
 
