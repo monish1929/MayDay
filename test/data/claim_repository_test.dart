@@ -9,6 +9,7 @@ import 'package:mayday/data/database/database_helper.dart';
 import 'package:mayday/data/enums.dart';
 import 'package:mayday/data/models/claim.dart';
 import 'package:mayday/data/models/claim_payload.dart';
+import 'package:mayday/data/models/corroboration.dart';
 import 'package:mayday/data/models/geo_point.dart';
 import 'package:mayday/data/models/logical_clock.dart';
 
@@ -274,6 +275,123 @@ void main() {
       // one — including signatures full of 0x00 bytes, which are valid.
       await repo.insertClaim(unsignedClaim(_sig(0x00)));
       expect(await repo.getClaim('unsigned-claim'), isNotNull);
+    });
+  });
+
+  group('watchActiveClaims', () {
+    // The store runs on sqflite_ffi, which answers from another isolate, so
+    // pumpEventQueue() can return before a read has come back. Wait on the
+    // condition itself instead of on a fixed number of event-loop turns.
+    Future<void> waitFor(bool Function() done, {String? describe}) async {
+      final deadline = DateTime.now().add(const Duration(seconds: 5));
+      while (!done()) {
+        if (DateTime.now().isAfter(deadline)) {
+          fail('timed out waiting for ${describe ?? 'condition'}');
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+    }
+
+    Claim sos(String id, {int seq = 1}) => _claim(
+          id: id,
+          type: ClaimType.sos,
+          originSequence: seq,
+          payload: SosPayload(
+            location: const GeoPoint(lat: 12.97, lon: 77.59),
+            headcount: HeadcountBucket.twoToFive,
+          ),
+        );
+
+    /// Subscribes and tears the subscription down with the test, so a failing
+    /// expectation cannot leave a listener querying a closed database.
+    List<List<Claim>> watch(ClaimRepository repo) {
+      final seen = <List<Claim>>[];
+      final sub = repo.watchActiveClaims().listen(seen.add);
+      addTearDown(sub.cancel);
+      return seen;
+    }
+
+    test('emits the current snapshot on subscribe, before any write',
+        () async {
+      await repo.insertClaim(sos('sos-1'));
+
+      final first = await repo.watchActiveClaims().first;
+
+      // A subscriber must be able to paint its first frame from this stream
+      // alone, without also calling getActiveClaims().
+      expect(first.map((c) => c.id), ['sos-1']);
+    });
+
+    test('a write re-emits without anyone asking for a refresh', () async {
+      final seen = watch(repo);
+      await waitFor(() => seen.isNotEmpty, describe: 'initial snapshot');
+
+      await repo.insertClaim(sos('sos-1'));
+
+      await waitFor(() => seen.last.length == 1, describe: 're-emit');
+      expect(seen.last.map((c) => c.id), ['sos-1']);
+    });
+
+    test('a corroboration re-emits, so a trust change reaches the map',
+        () async {
+      // The reason this notify exists: a claim corroborated over the mesh
+      // changes trust, and trust is what a pin's appearance is drawn from.
+      // Without it the pin stays rendered faint even once corroborated.
+      await repo.insertClaim(sos('sos-1'));
+
+      final seen = watch(repo);
+      await waitFor(() => seen.isNotEmpty, describe: 'initial snapshot');
+      final before = seen.length;
+
+      await repo.insertCorroboration(
+        'sos-1',
+        Corroboration(
+          deviceId: 'device-b',
+          hopDistance: 1,
+          kind: CorroborationKind.independentGeneration,
+          isVolunteer: false,
+          logicalClock: const LogicalClock(deviceId: 'device-b', counter: 4),
+        ),
+      );
+
+      await waitFor(() => seen.length > before, describe: 'corroboration emit');
+      expect(seen.last.single.corroborations.map((c) => c.deviceId),
+          contains('device-b'));
+    });
+
+    test('a burst of writes coalesces but still ends on the final state',
+        () async {
+      // Claims arrive from the mesh in bursts — a relay flushing its queue on
+      // reconnect delivers many at once, not one awaited at a time. What must
+      // hold is not a particular emission count but that the LAST emission
+      // describes the full set: a write landing mid-read is never dropped.
+      final seen = watch(repo);
+      await waitFor(() => seen.isNotEmpty, describe: 'initial snapshot');
+
+      await Future.wait([
+        for (var i = 0; i < 20; i++) repo.insertClaim(sos('sos-$i', seq: i + 1)),
+      ]);
+
+      await waitFor(() => seen.last.length == 20, describe: 'all 20 visible');
+      expect(seen.length, lessThan(21),
+          reason: 'reads should coalesce rather than run one per write');
+    });
+
+    test('cancelling one subscriber does not stop another', () async {
+      // The change controller is static and shared. Tearing down the map must
+      // not silence the volunteer ops screen.
+      final a = <List<Claim>>[];
+      final subA = repo.watchActiveClaims().listen(a.add);
+      final b = watch(repo);
+      await waitFor(() => a.isNotEmpty && b.isNotEmpty,
+          describe: 'both initial snapshots');
+
+      await subA.cancel();
+      await repo.insertClaim(sos('sos-1'));
+
+      await waitFor(() => b.last.length == 1, describe: 'surviving subscriber');
+      expect(b.last.map((c) => c.id), ['sos-1']);
+      expect(a.last, isEmpty, reason: 'cancelled subscriber received nothing');
     });
   });
 }

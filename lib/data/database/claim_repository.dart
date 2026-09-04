@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 import 'package:sqflite/sqflite.dart';
 import 'package:cbor/cbor.dart';
@@ -41,6 +42,30 @@ class UnsignedClaimException implements Exception {
 class ClaimRepository {
   final DatabaseHelper _dbHelper = DatabaseHelper.instance;
 
+  /// Fires once per committed write, so a reader can re-query.
+  ///
+  /// Static because the store it reports on is a single SQLite file behind a
+  /// singleton `DatabaseHelper`. A per-instance controller would mean a UI
+  /// holding one `ClaimRepository` never hears about a write made through the
+  /// `ClaimRepository` the mesh receive path constructed -- which is the exact
+  /// case that matters: a claim arriving from another phone must reach the map
+  /// without anyone refreshing.
+  ///
+  /// Carries no payload. Readers re-query rather than being handed the changed
+  /// row, because what a reader wants is the CURRENT active set, and a claim
+  /// can leave that set (resolved, archived) as easily as join it.
+  static final StreamController<void> _changeController =
+      StreamController<void>.broadcast();
+
+  /// Never closed -- see [_changeController]; it lives as long as the process.
+  /// Guarded anyway so a test that does close it fails loudly at the point of
+  /// the close rather than here.
+  static void _notifyChange() {
+    if (!_changeController.isClosed) {
+      _changeController.add(null);
+    }
+  }
+
   Future<void> insertClaim(Claim claim) async {
     final db = await _dbHelper.database;
     await db.insert(
@@ -48,6 +73,7 @@ class ClaimRepository {
       _toMap(claim),
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
+    _notifyChange();
   }
 
   Future<void> updateClaim(Claim claim) async {
@@ -58,6 +84,7 @@ class ClaimRepository {
       where: 'id = ?',
       whereArgs: [claim.id],
     );
+    _notifyChange();
   }
 
   /// Records one device's corroboration of a claim.
@@ -89,6 +116,13 @@ class ClaimRepository {
       },
       conflictAlgorithm: ConflictAlgorithm.ignore,
     );
+    // A corroboration changes the claim's trust, and trust is what a pin's
+    // appearance is drawn from (PERSON_C.md Wk2 D2: "pins update in place when
+    // trust tier changes"). Without this notify, a claim corroborated over the
+    // mesh would sit on the map still rendered faint. `INSERT OR IGNORE` can
+    // be a no-op for a repeat device, which costs one redundant re-query --
+    // cheaper than tracking whether the row actually landed.
+    _notifyChange();
   }
 
   Future<List<Corroboration>> getCorroborations(String claimId) async {
@@ -144,6 +178,68 @@ class ClaimRepository {
       claim.corroborations = await getCorroborations(claim.id);
     }
     return claims;
+  }
+
+  /// The active claim set, re-emitted on every write.
+  ///
+  /// Emits the current snapshot on subscribe, so a caller never has to pair
+  /// this with a one-off [getActiveClaims] to paint its first frame.
+  ///
+  /// Reads are COALESCED: while one re-query is in flight, further writes set
+  /// a flag rather than queueing their own read, and a single extra read runs
+  /// when the first finishes. This is not premature optimisation -- claims
+  /// arrive from the mesh in bursts (a relay flushing its queue on reconnect
+  /// delivers many at once), and each read here is a query plus one
+  /// corroboration query per claim. Uncoalesced, a burst of 50 would be 50
+  /// full re-reads to arrive at a set the last one alone describes.
+  ///
+  /// Coalescing is safe because the events carry no payload: every emission is
+  /// the whole current set, so dropping an intermediate read loses nothing but
+  /// a frame that was already stale. The loop is structured so the LAST write
+  /// always produces an emission -- a change that lands mid-read is not lost.
+  Stream<List<Claim>> watchActiveClaims() {
+    late final StreamController<List<Claim>> controller;
+    StreamSubscription<void>? changeSub;
+    var reading = false;
+    var dirty = false;
+
+    Future<void> emit() async {
+      if (reading) {
+        dirty = true;
+        return;
+      }
+      reading = true;
+      try {
+        do {
+          dirty = false;
+          try {
+            final claims = await getActiveClaims();
+            if (!controller.isClosed) controller.add(claims);
+          } catch (e, stack) {
+            // Surfaced to the subscriber rather than thrown: the caller is a
+            // UI, and a store read failing must not take the map down with it.
+            if (!controller.isClosed) controller.addError(e, stack);
+          }
+        } while (dirty && !controller.isClosed);
+      } finally {
+        reading = false;
+      }
+    }
+
+    controller = StreamController<List<Claim>>(
+      onListen: () {
+        // Subscribed before the first read, so a write landing during that
+        // read still triggers a follow-up emission.
+        changeSub = _changeController.stream.listen((_) => emit());
+        emit();
+      },
+      onCancel: () async {
+        await changeSub?.cancel();
+        changeSub = null;
+      },
+    );
+
+    return controller.stream;
   }
 
   Map<String, dynamic> _toMap(Claim claim) {
