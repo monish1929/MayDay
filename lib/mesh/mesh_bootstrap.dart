@@ -59,6 +59,25 @@ class MeshBootstrap {
   /// the Day 4 two-phone run — deliberately simple, deliberately temporary.
   static const Duration flushInterval = Duration(seconds: 5);
 
+  /// How often a volunteer node emits a beacon — PERSON_A.md Wk4 D3.
+  ///
+  /// **PROVISIONAL.** D3 says the interval is "tuned against battery" and D5
+  /// is where that tuning happens against the 72-hour target; neither has real
+  /// numbers yet. 60s is a placeholder chosen to be obviously conservative:
+  /// slow enough not to crowd claim traffic, fast enough that a gradient
+  /// entry is refreshed several times inside
+  /// `VolunteerGradient.defaultEntryLifetime`. A non-volunteer node emits
+  /// nothing at all, so this costs unvouched devices no radio time.
+  static const Duration beaconInterval = Duration(seconds: 60);
+
+  /// How often clock readings are exchanged with neighbours already
+  /// connected — Wk4 D4.
+  ///
+  /// Rare on purpose. Clock drift is a slow quantity, the reading is only
+  /// ever used to render "about 2 hours ago", and this piggybacks on existing
+  /// connections rather than opening any (see [MeshNode.gossipTime]).
+  static const Duration gossipInterval = Duration(minutes: 5);
+
   /// The running node, once [start] has succeeded.
   ///
   /// A holder rather than an injected dependency because `ui/` is C's and the
@@ -143,13 +162,30 @@ class MeshBootstrap {
     // the radio has had a chance to find a neighbour first; a claim raised
     // into an empty peer list just sits in the queue until the next flush.
     if (DebugSosTrigger.enabled) {
-      Timer(const Duration(seconds: 12), () => DebugSosTrigger.raise(node));
+      Timer(const Duration(seconds: 12),
+          () => DebugSosTrigger.raiseSosSuite(node));
       // Both phones raise the hazard at the same delay so they generate it
       // INDEPENDENTLY, before either has heard the other's. A device that
       // received the claim first would be echoing, not witnessing.
       Timer(const Duration(seconds: 14),
           () => DebugSosTrigger.raiseHazard(node));
     }
+
+    // Volunteer beaconing. `emitBeacon` returns null unless this device is
+    // actually a vouched volunteer, so on an ordinary phone this timer costs
+    // one registry lookup a minute and no radio at all.
+    Timer.periodic(beaconInterval, (_) async {
+      final beacon = await node.emitBeacon();
+      if (beacon != null) {
+        _log('beacon emitted, hopLimit=${beacon.hopLimit}');
+      }
+    });
+
+    // Time gossip, piggybacked on whoever is already connected.
+    Timer.periodic(gossipInterval, (_) async {
+      final sent = await node.gossipTime();
+      if (sent > 0) _log('time gossip sent to $sent peer(s)');
+    });
 
     Timer.periodic(flushInterval, (_) async {
       final sent = await node.flush();
@@ -158,7 +194,8 @@ class MeshBootstrap {
       // rejected" look identical from the map — the counters are the only way
       // to tell them apart during the two-phone run. Read with:
       //   adb logcat -s flutter
-      _log('peers=${node.transport.peers.length} sent=$sent ${node.stats}');
+      _log('peers=${node.transport.peers.length} sent=$sent ${node.stats} '
+          '${node.gradient}');
     });
     return MeshStartResult.started(node);
   }
