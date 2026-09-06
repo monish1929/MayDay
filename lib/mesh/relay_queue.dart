@@ -3,6 +3,7 @@
 import '../data/enums.dart';
 import 'envelope.dart';
 import 'routing_policy.dart';
+import 'volunteer_gradient.dart';
 
 /// A neighbour this device can currently write to.
 ///
@@ -76,6 +77,16 @@ class RelayQueue {
   final int maxDroppable;
   final int maxStandard;
 
+  /// Volunteer-first send ordering, one step better than a flag — PERSON_A.md
+  /// Wk4 D3.
+  ///
+  /// [RelayTarget.isVolunteer] only ever says "this neighbour is itself a
+  /// volunteer", which in a sparse mesh is almost never true. The gradient
+  /// adds the answer that usually matters: which neighbour has a volunteer
+  /// *behind* it, and how far. Null until beaconing is running, in which case
+  /// ordering falls back to the flag alone — correct, just not preferential.
+  final VolunteerGradient? gradient;
+
   final List<_QueuedRelay> _queue = [];
   int _seq = 0;
 
@@ -90,6 +101,7 @@ class RelayQueue {
     this.policy = const RoutingPolicy(),
     this.maxDroppable = defaultMaxDroppable,
     this.maxStandard = defaultMaxStandard,
+    this.gradient,
   });
 
   int get length => _queue.length;
@@ -155,10 +167,7 @@ class RelayQueue {
   Future<int> drain(List<RelayTarget> targets) async {
     if (targets.isEmpty || _queue.isEmpty) return 0;
 
-    final ordered = [...targets]..sort((a, b) {
-        if (a.isVolunteer == b.isVolunteer) return 0;
-        return a.isVolunteer ? -1 : 1;
-      });
+    final ordered = _orderTargets(targets);
 
     _queue.sort((a, b) {
       final byPriority = a.priority.index.compareTo(b.priority.index);
@@ -210,6 +219,42 @@ class RelayQueue {
     }
 
     return sent;
+  }
+
+  /// Neighbours in send order: volunteers, then whoever has a volunteer
+  /// nearest behind them, then everyone else.
+  ///
+  /// **This changes the order, never the set.** Every target is still sent
+  /// to; the flood is untouched. If the radio dies partway through a drain,
+  /// the writes that did happen were the ones most likely to reach someone
+  /// who can act — which is the entire benefit, and the only one claimed.
+  /// CLAUDE.md §1.1 is why it cannot become a filter: preferring a direction
+  /// is send ordering, skipping a neighbour is an eviction rule.
+  List<RelayTarget> _orderTargets(List<RelayTarget> targets) {
+    final g = gradient;
+
+    // Unknown sorts behind every known distance, but still gets sent to.
+    const noRoute = 1 << 20;
+
+    int rank(RelayTarget t) {
+      if (t.isVolunteer) return 0;
+      if (g == null) return noRoute;
+      if (g.isDirectVolunteer(t.peerId)) return 0;
+      return (g.hopsVia(t.peerId) ?? noRoute) + 1;
+    }
+
+    final indexed = <MapEntry<int, RelayTarget>>[
+      for (var i = 0; i < targets.length; i++) MapEntry(i, targets[i]),
+    ];
+
+    indexed.sort((a, b) {
+      final byRank = rank(a.value).compareTo(rank(b.value));
+      // Insertion order as the tie-break, so ordering stays stable and a
+      // drain does not silently reshuffle equally-good neighbours run to run.
+      return byRank != 0 ? byRank : a.key.compareTo(b.key);
+    });
+
+    return [for (final e in indexed) e.value];
   }
 
   RelayPriority _priorityFor(Envelope envelope, RelayDecision decision) {
