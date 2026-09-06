@@ -10,6 +10,15 @@ class DatabaseHelper {
 
   DatabaseHelper._init();
 
+  /// Bumped to 2 by PERSON_A.md Wk3 D3 / Wk4 D1-D2, which added the three
+  /// tables in [_createMeshIdentityTables].
+  ///
+  /// A device that has been through a disaster already holds claims. An
+  /// upgrade that dropped and recreated the store would delete active SOS
+  /// records, which CLAUDE.md §1.1 forbids outright — so [_upgradeDB] only
+  /// ever adds tables, and there is deliberately no destructive branch in it.
+  static const int schemaVersion = 2;
+
   Future<Database> get database async {
     if (_database != null) return _database!;
     _database = await _initDB('mayday.db');
@@ -25,8 +34,9 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 1,
+      version: schemaVersion,
       onCreate: _createDB,
+      onUpgrade: _upgradeDB,
     );
   }
 
@@ -83,6 +93,98 @@ class DatabaseHelper {
       CREATE TABLE seen_messages (
         msg_id  BLOB PRIMARY KEY,
         seen_at INTEGER NOT NULL
+      );
+    ''');
+
+    await _createMeshIdentityTables(db);
+  }
+
+  /// Additive only. See [schemaVersion] for why there is no other kind.
+  Future<void> _upgradeDB(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 2) {
+      await _createMeshIdentityTables(db);
+    }
+  }
+
+  /// Tables owned by `mesh/` and `identity/` rather than by the claim model —
+  /// the same arrangement `seen_messages` already has.
+  ///
+  /// **Not yet in CLAIM_SCHEMA.md §10, and that is a known gap, not an
+  /// oversight.** §10 is a shared contract with no single owner (CLAUDE.md
+  /// §3.3), so recording these needs the three-person sync §12 requires.
+  /// Flagged in the PR and in PERSON_A.md; do not quietly edit §10 alone.
+  Future<void> _createMeshIdentityTables(Database db) async {
+    // A resolution can outrun the SOS it resolves: it floods from wherever
+    // the volunteer was standing, while the original travelled from wherever
+    // the person was. A device on the far side may meet the resolution first.
+    //
+    // Dropping it is not an option — CLAUDE.md §1.1 — because the claim would
+    // then arrive afterwards and sit ACTIVE forever on that phone, with
+    // volunteers still being dispatched to someone already rescued. So it is
+    // parked here and applied when the claim shows up (PERSON_A.md Wk3 D3).
+    //
+    // Persisted rather than held in memory for the same reason: a device that
+    // restarts between the two arrivals must not forget.
+    await db.execute('''
+      CREATE TABLE pending_resolutions (
+        sos_id              TEXT PRIMARY KEY,
+        nonce               BLOB    NOT NULL,
+        requester_pub_key   BLOB    NOT NULL,
+        requester_sig       BLOB    NOT NULL,
+        resolver_pub_key    BLOB    NOT NULL,   -- the counter-signing volunteer
+        method              INTEGER NOT NULL,   -- ResolutionMethod
+        clock_device_id     TEXT    NOT NULL,   -- resolvedAtLogical, see §4
+        clock_counter       INTEGER NOT NULL
+      );
+    ''');
+
+    // One row per (voucher, vouchee) pair. The primary key is the §2.2 rule
+    // "a voucher speaks for a person once" expressed in the schema rather
+    // than left to calling code: repeating a vouch must not let one voucher
+    // consume its own cap twice, or count twice toward promotion.
+    await db.execute('''
+      CREATE TABLE vouches (
+        voucher_pub_key BLOB    NOT NULL,
+        vouchee_pub_key BLOB    NOT NULL,
+        vouch_index     INTEGER NOT NULL,       -- self-asserted, diagnostic only
+        vouch_cap       INTEGER NOT NULL,       -- carried inside the signed vouch
+        voucher_sig     BLOB    NOT NULL,       -- envelope originSig, kept so the
+                                                -- stored row stays independently
+                                                -- verifiable without the envelope
+        clock_device_id TEXT    NOT NULL,
+        clock_counter   INTEGER NOT NULL,
+        PRIMARY KEY (voucher_pub_key, vouchee_pub_key)
+      );
+    ''');
+
+    await db.execute(
+        'CREATE INDEX idx_vouches_vouchee ON vouches(vouchee_pub_key);');
+
+    // Only the original voucher may revoke its own vouch, so the key is the
+    // same pair. `clock_counter` is what "most recent valid revocation wins"
+    // is measured on — a later re-vouch outranks an earlier revocation.
+    await db.execute('''
+      CREATE TABLE revocations (
+        revoker_pub_key BLOB    NOT NULL,
+        revoked_pub_key BLOB    NOT NULL,
+        reason          INTEGER NOT NULL,       -- RevocationReason
+        clock_device_id TEXT    NOT NULL,
+        clock_counter   INTEGER NOT NULL,
+        PRIMARY KEY (revoker_pub_key, revoked_pub_key)
+      );
+    ''');
+
+    // Campaign-verified public keys — the roots the whole vouch web hangs
+    // off. Empty in every build today: issuing and loading a campaign
+    // credential is B's Phase 4 identity work, and until it exists no device
+    // is campaign-verified and therefore no vouch can be accepted from
+    // anyone. That is the correct failure direction (nobody is trusted by
+    // accident) but it does mean vouching cannot be exercised end to end on
+    // hardware yet. Flagged in PERSON_A.md.
+    await db.execute('''
+      CREATE TABLE trust_anchors (
+        pub_key BLOB PRIMARY KEY,
+        label   TEXT
       );
     ''');
   }

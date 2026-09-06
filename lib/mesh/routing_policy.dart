@@ -51,6 +51,33 @@ class RoutingPolicy {
   static const int hazardHopLimit = 5;
   static const int resourceHopLimit = 3;
 
+  /// Hop limits for the non-claim kinds. Same provisional status as the three
+  /// above — ordering between them is a design decision, the numbers are not.
+  ///
+  /// A resolution gets **exactly** the SOS reach, not one less: it has to be
+  /// able to travel everywhere the SOS it answers reached, or the claim sits
+  /// ACTIVE forever on every device past the shortfall. SOS never decays, so
+  /// nothing else would ever clear it (§2.3).
+  static const int resolutionHopLimit = sosHopLimit;
+
+  /// Vouches and revocations travel wide: a volunteer whose vouch stalled is
+  /// invisible as a volunteer, and a revocation that stalls is a revoked one
+  /// still trusted.
+  static const int trustHopLimit = 8;
+
+  /// Beacons are short-range by design. The gradient they build is only
+  /// useful within a few hops — "a volunteer is nine hops that way" is not a
+  /// routing preference, it is noise, and every extra hop is a periodic
+  /// message multiplied across the whole mesh.
+  static const int beaconHopLimit = 4;
+
+  /// Time gossip is exchanged only between two devices that meet, so it needs
+  /// exactly enough hop budget to arrive and none to travel on. The receive
+  /// pipeline decrements this to zero and stores without relaying, which is
+  /// [RelayDecision.doNotRelay] arriving at the same answer from the other
+  /// direction.
+  static const int timeGossipHopLimit = 1;
+
   /// SOS travels furthest, resource least. An SOS that stops one hop short of
   /// a volunteer is a person not found; a resource pin that stops short is a
   /// stale count someone corrects later.
@@ -63,6 +90,34 @@ class RoutingPolicy {
         return hazardHopLimit;
       case ClaimType.resource:
         return resourceHopLimit;
+    }
+  }
+
+  /// Initial `hopLimit` for a locally originated non-claim message.
+  ///
+  /// Separate from [initialHopLimitFor], which takes a `ClaimType`, because
+  /// they answer different questions and a single function taking both would
+  /// need a branch on which one it was handed. Kind 0 is deliberately absent:
+  /// a claim's reach depends on what sort of claim it is, and nothing else
+  /// here knows that.
+  int initialHopLimitForKind(EnvelopeKind kind) {
+    switch (kind) {
+      case EnvelopeKind.claim:
+        // Callers with a real claim must use initialHopLimitFor(type). This
+        // fallback exists so the switch stays exhaustive; it takes the SOS
+        // value because guessing short is the one direction §1.1 forbids.
+        return sosHopLimit;
+      case EnvelopeKind.corroboration:
+        return hazardHopLimit;
+      case EnvelopeKind.resolution:
+        return resolutionHopLimit;
+      case EnvelopeKind.vouch:
+      case EnvelopeKind.revocation:
+        return trustHopLimit;
+      case EnvelopeKind.volunteerBeacon:
+        return beaconHopLimit;
+      case EnvelopeKind.timeGossip:
+        return timeGossipHopLimit;
     }
   }
 
