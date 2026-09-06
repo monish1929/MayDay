@@ -168,11 +168,14 @@ Proof on hardware: both phones ended at `rx=2 dup=1 stored=1 relayed=1`, and the
 I take Rescue — deepest grip on SOS propagation after Phase 2, and it's where never-merge and never-decay matter most. B takes Report, C takes Contribute. Back to `a/` branches.
 
 ### Day 1 — SOS creation and the three sub-types
-- [ ] Individual SOS end to end: create → sign → flood → appears on other devices
-- [ ] Group SOS carrying a `HeadcountBucket`
-- [ ] **Proxy SOS** — for someone whose phone is dead; carries `reporterDeviceId` and a reporter-marked location
-- [ ] Verify with B that each generates a **unique** ID via `sosClaimId()`, never the merge hash
-- [ ] Two SOS raised in the same bucket seconds apart → two distinct claims on every device
+- [x] Individual SOS: create → sign → store → flood. `SosOrigination.raiseIndividual` (`lib/flows/rescue/sos_origination.dart`). **"Appears on other devices" is untested** — none of this has touched a radio.
+- [x] Group SOS carrying a `HeadcountBucket` — `raiseGroup`. A bucket, not a count: "6–15" is what a frightened person on a roof can actually tell you, and a precise number would be a false precision that dispatch decisions then get made on.
+- [x] **Proxy SOS** — `raiseProxy`, carrying `reporterDeviceId` and a reporter-marked location; note capped at 80 chars per §9.2 rather than refused, because an SOS that fails to send because somebody typed too much is not an acceptable failure mode.
+- [x] Each generates a unique ID via `sosClaimId()`, never the merge hash — **checked in code on the outbound path**, not only the inbound one. The inbound check in `ClaimIngestion` guards this device against a stranger's forged id; the outbound one guards the whole mesh against a bug in our own factory. Different failures, same symptom, and the symptom is the worst one in the project.
+- [ ] **Verify with B** that the outbound check belongs there, and that `identityRuleViolated` is the failure `data/` wants to see
+- [ ] Two SOS raised in the same bucket seconds apart → two distinct claims on every device. `DebugSosTrigger.raiseSosSuite` raises all three sub-types at one location for exactly this — not yet run on hardware, and no unit test written.
+
+**One origination path, not three.** The sub-types differ only by payload; the id rule, the signing, the rebuild-from-signed-bytes and the flood are shared. Three paths would have been three places for the SOS id rule to drift.
 
 ### Day 2 — Flood behaviour under stress
 - [ ] Three-phone flood: SOS from one edge reaches the far edge
@@ -184,11 +187,14 @@ I take Rescue — deepest grip on SOS propagation after Phase 2, and it's where 
 **Late-join matters more than it sounds:** a volunteer arriving an hour later must still see the active SOS. This is the practical reason SOS never decays.
 
 ### Day 3 — QR resolution, transport side
-- [ ] `kind: 2` resolution envelope defined and propagating
-- [ ] Carries `sosId`, `nonce`, requester signature, volunteer counter-signature
-- [ ] Verify **both** signatures at the hop before applying
-- [ ] Resolution floods back through the mesh like the original SOS
-- [ ] A resolution for an **unknown** `sosId` is stored and applied when the claim later arrives
+- [x] `kind: 2` resolution envelope defined — `lib/mesh/messages/resolution_message.dart`
+- [x] Carries `sosId`, `nonce`, requester signature, volunteer counter-signature. The counter-signature **is** the envelope's `originSig` and the volunteer's key **is** `originPubKey` — not repeated in the body, which would cost 96 bytes against the 400B budget for no extra proof.
+- [x] Verify **both** signatures at the hop before applying — the envelope signature in the pipeline (§9.3 step 2), the requester's in `ResolutionIngestion`, which is the first point the bytes are decoded far enough to find it. One good signature and one forged one must not clear an SOS: the pair is the entire proof that two devices were physically in the same place.
+- [x] Resolution floods back through the mesh like the original SOS — `resolutionHopLimit == sosHopLimit`, and `RelayPriority.critical`, so it is never shed under queue pressure
+- [x] A resolution for an **unknown** `sosId` is parked and applied when the claim arrives — `PendingResolutionStore`, persisted, so a restart between the two arrivals does not lose it. Dropping it would leave that phone showing the rescue as active **forever**: SOS never decays, so nothing else would ever clear it.
+- [x] QR payload build/parse, and the volunteer's counter-sign-apply-flood — `lib/flows/rescue/qr_resolution.dart`
+
+**Replay rejection is Day 4 and is not built.** A fresh nonce is generated per *display*, which is what makes Day 4's test possible — but nothing yet refuses a stale one. Do not read the nonce field as replay protection.
 
 That last one is easy to miss: a resolution can outrun the original SOS to a distant device. Dropping it leaves the claim active forever on that phone.
 
@@ -214,32 +220,42 @@ That last one is easy to miss: a resolution can outrun the original SOS to a dis
 Phase 4 splits three ways across one feature. **My share: vouch and revocation as message kinds, plus volunteer beaconing.** B does keypairs and secure storage; C does the volunteer UI.
 
 ### Day 1 — Vouch messages
-- [ ] `kind: 3` vouch envelope — voucher public key, vouchee public key, voucher signature
-- [ ] Vouch propagates and is independently verifiable by any device, no server
-- [ ] Vouch cap (5 per verified volunteer) carried **inside the signed vouch** so any device can check it
-- [ ] A vouch signed by a `vouchedProvisional` node → **rejected.** Provisional nodes cannot vouch — this stops unbounded trust minting from one compromise.
+- [x] `kind: 3` vouch envelope — `lib/mesh/messages/vouch_message.dart`. Voucher key and signature ride on the envelope (§9.1); the body carries the vouchee key, the index and the cap.
+- [x] Vouch propagates and is independently verifiable by any device, no server. A **rejected** vouch is still relayed: this device refusing it usually means only that *this device* has never heard of the voucher, and a phone three hops on may hold that anchor. Refusing to forward would make each device's ignorance contagious.
+- [x] Vouch cap (5 per verified volunteer) carried **inside the signed vouch**. Two guards, deliberately. The wire cap is refused above 5 — "carried inside the vouch" only helps if the receiver also declines to believe a voucher that grants itself a cap of 500. And enforcement is the receiver *ranking* a voucher's vouches by the logical clock it signed and taking the first five, because delivery is out of order and "the first five this device happened to hear" would give two devices two different answers about one voucher.
+- [x] A vouch signed by a `vouchedProvisional` node → **rejected** (`TrustWriteRejection.voucherNotVerified`)
+- [x] `NodeTrust` + `NodeCapabilities` (`lib/identity/node_trust.dart`) and `VouchRegistry` (`lib/identity/vouch_registry.dart`)
+
+**Nothing is campaign-verified in any build today,** so no vouch is currently accepted from anyone: the whole web hangs off the `trust_anchors` table, and issuing campaign credentials is B's Phase 4 work. That is the right failure direction — nobody is trusted by accident — but it does mean vouching cannot be exercised end to end until B's half lands. There is deliberately no convenience bypass; a trust registry with one is not a trust registry.
+
+**Doc drift found, flagged not resolved.** `MAYDAY_PROJECT_CONTEXT.md` §2.2 says two independent campaign-verified vouches promote a node to "full trust", but `CLAIM_SCHEMA.md` §11 fixes `NodeTrust` at three values with no slot for it. Rather than invent a fourth enum value — a §11 change needs all three of us — the promotion is expressed as a capability (`NodeCapabilities.canPledgeResources`) and the tier stays `vouchedProvisional`. **Raise at the next team sync.**
 
 ### Day 2 — Revocation
-- [ ] `kind: 4` revocation envelope
-- [ ] Propagates like any other claim and overrides the vouch
-- [ ] Most recent valid revocation wins, ordered by logical clock
-- [ ] Revocation signed by someone other than the original voucher → rejected
-- [ ] A revoked node's later messages stop being volunteer-weighted
+- [x] `kind: 4` revocation envelope — `lib/mesh/messages/revocation_message.dart`
+- [x] Propagates like any other claim and overrides the vouch — flooded, never droppable, so it can outrun the vouch it cancels
+- [x] Most recent valid revocation wins, ordered by logical clock. It cancels vouches at or **below** its own counter, so a genuine re-vouch signed afterwards stands again — "most recent wins" has to cut both ways, or a revoked volunteer could never be reinstated, there being no network to do it over.
+- [x] Revocation signed by someone other than the original voucher → rejected (`notTheOriginalVoucher`). Without it, one shouted 100-byte message strips any volunteer of their status — a denial of service aimed squarely at the responders.
+- [x] A revoked node's later messages stop being volunteer-weighted — `capabilitiesOf` drops to `unverified`, so its beacons are dropped and its clock readings lose volunteer weight
 
 ### Day 3 — Volunteer beaconing
 This replaces "directional relay," which cannot work — **BLE has no directional information, and in a full flood there's nothing left to prefer.**
-- [ ] `kind: 5` beacon — signed "volunteer here" with a hop count
-- [ ] Volunteer nodes broadcast periodically; interval tuned against battery
-- [ ] Receiving devices build a gradient: "a volunteer is ~3 hops away via this neighbour"
-- [ ] Gradient entries expire — volunteers move, and a stale gradient is worse than none
-- [ ] Send ordering uses the gradient: volunteer-ward neighbours first
-- [ ] Beacons rate-limited so they don't crowd out real traffic
+- [x] `kind: 5` beacon — `lib/mesh/messages/beacon_message.dart`. **The hop count is deliberately not a field in the body**, and cannot be: the body is exactly what `originSig` covers, so the first relay to increment a counter would invalidate the signature and every device past it would drop the beacon. Hop distance is derived from what is left of the envelope's `hopLimit` — the field designed to change per hop, and the same reasoning §9.1 uses to exclude it from the signature.
+- [x] Volunteer nodes broadcast periodically — `MeshBootstrap.beaconInterval`. `emitBeacon()` returns null on a device the mesh has not vouched for, so an ordinary phone spends no radio on this at all.
+- [ ] **Interval tuned against battery** — 60s is a placeholder. That is Day 5's job, and Day 5 has no numbers yet.
+- [x] Receiving devices build a gradient — `VolunteerGradient`, keyed by volunteer, best route chosen by beacon sequence first and hops second. Sequence first matters: a beacon that took a slow four-hop route can easily arrive after a newer one-hop beacon, and letting it win would point the gradient at the longer path.
+- [x] Gradient entries expire, and routes through a departed neighbour are forgotten outright. **In memory, never persisted** — reloading yesterday's gradient after a restart would send SOS traffic confidently toward a volunteer who left hours ago, which is worse than having no preference, because the device would stop looking.
+- [x] Send ordering uses the gradient — `RelayQueue._orderTargets`. **Order, never the set:** every neighbour is still written to, so this is send ordering and not an eviction rule (§1.1). If it ever becomes a filter, that is the bug.
+- [x] Beacons rate-limited — two guards. `RoutingPolicy` classes them droppable, and `BeaconIngestion` refuses to re-relay the same volunteer's beacon inside a minimum interval. Per volunteer, not globally: two volunteers beaconing at once are two facts the gradient needs, and silencing one because the other just spoke hides a whole route.
+- [x] A beacon from a key nobody has vouched for is **dropped, never believed.** A beacon is a self-assertion — anyone can sign "volunteer here" — and believing one would let any phone put itself at the front of the queue for every SOS in range.
 
 ### Day 4 — Time gossip transport
-- [ ] `kind: 6` — devices exchange clock readings on meeting
-- [ ] Hand readings to B's layer, which computes the median (volunteers weighted higher)
-- [ ] Gossip **piggybacks on existing connections** rather than opening new ones — a battery decision, not a nicety
-- [ ] Measure real clock drift between our test devices over 24h; note it (feeds an open question)
+- [x] `kind: 6` — `lib/mesh/messages/time_gossip_message.dart` + `TimeGossipIngestion`. Never relayed: a clock reading is evidence about the two devices that exchanged it, and forwarding one secondhand would let a single skewed clock propagate as though many devices had independently observed it — exactly what a median is supposed to prevent.
+- [x] Readings handed to B's layer, with the volunteer flag it has no way to work out for itself
+- [ ] **B's layer does not compute a median.** `MeshTimeGossip.receiveGossip` does a running weighted average instead. That is a `data/` change and therefore B's (§3.3) — raised with B, not reimplemented on my side.
+- [x] Gossip **piggybacks on existing connections** — `MeshNode.gossipTime()` writes only to peers the transport already has and opens nothing. One BLE connection is a connect, a negotiate, a write and a disconnect; spending that to swap a timestamp on a 72-hour budget is the trade §1.1 says to make the other way round.
+- [ ] Measure real clock drift between our test devices over 24h — not started. `TimeGossipIngestion.samples` and `meanAbsoluteOffsetMs` exist to read it off a phone when it is.
+
+**This is gossip, not sync, and the difference is the whole point.** §1.2 rules out NTP because there is no network to sync against; it does not rule out two phones that meet comparing notes. Nobody is authoritative, no single reading is believed, and the output may only ever render "about 2 hours ago" beside a pin. Ordering, merging, decay and claim identity stay on logical clocks (§4).
 
 ### Day 5 — Duty cycling and the battery budget
 - [ ] Duty-cycled scanning (start 10s on / 50s off, tune from there)
@@ -348,9 +364,17 @@ Beyond the standard checks in `CLAUDE.md` §4.5:
 | 2026-08-21 | Wk2 D3 | `ab/transport-data-wiring` | Receive pipeline in exact §9.3 order + persisted `SeenMessageCache` with eviction. Relay preserves `msgId`; rejected envelopes are not recorded as seen. 96/96 tests green, `flutter analyze` clean. | Store step goes through an `EnvelopeSink` interface — **real wiring waits on B's `ingestClaim()`**. |
 | 2026-08-25 | Wk2 D5 | `ab/transport-data-wiring` | **Day 5 routing policy.** `RoutingPolicy` (full flood for sos/sosProxy/hazard/resolution/vouch/revocation, selective for resource, time gossip never relayed) and `RelayQueue` (volunteer-first drain, backpressure). SOS and resolutions sit in a priority class with no cap and no eviction branch — §1.1 means a queue cap is an eviction rule. 18 new tests. | `hopLimit` defaults still provisional; 3b never ran, so nobody knows what one hop buys. |
 | 2026-08-25 | Wk2 D4 | `ab/transport-data-wiring` | **Day 4 code, not Day 4 evidence.** `MeshTransport` seam + `MeshNode` joining radio → pipeline → ingestion → relay queue, and `BleMeshTransport` porting Phase 0's GATT setup with all four hardware lessons. New rule: a claim rejected for `deviceIdMismatch`/`forgedClaimId` is not relayed — an honest device must not amplify a lie the signature cannot catch. 137/137 tests green, `flutter analyze` clean. | **Nothing here has touched a radio.** Needs two phones, manifest permissions, and C's app shell (`origin/c/app-shell`) before the Day 4 boxes can be ticked. |
+| 2026-09-06 | Wk3 D1, D3 | `a/phase3-4-message-kinds` | **Rescue flow, transport side.** `SosOrigination` with all three SOS sub-types through one path, outbound id-rule check so a bug in our own factory cannot mint a colliding SOS id. `kind: 2` resolution: both signatures verified before anything is applied, floods at SOS reach and SOS priority, and a resolution that outruns its claim is **parked and replayed** when the claim arrives (`PendingResolutionStore`, persisted). QR payload build/parse + counter-sign in `flows/rescue/`. | **Code, not evidence.** No radio, no tests yet. Replay rejection is D4 and is explicitly not built. |
+| 2026-09-06 | Wk4 D1–D4 | `a/phase3-4-message-kinds` | **The four message kinds.** `kind: 3` vouch (cap of 5 enforced by ranking, provisional nodes cannot vouch), `kind: 4` revocation (only the original voucher, most-recent-wins by logical clock, re-vouch reinstates), `kind: 5` beacon + `VolunteerGradient` + gradient-ordered sends + per-volunteer relay rate limit, `kind: 6` time gossip piggybacked on existing connections and never relayed. `EnvelopeRouter` added: before it, every non-claim kind was rejected by `ClaimIngestion` **and** silently stopped from relaying. | Vouching cannot run end to end until B lands campaign credentials — `trust_anchors` is empty, so nothing is campaign-verified. Beacon interval and gradient lifetime are placeholders pending D5. |
 
 ### Open questions I'm carrying
 
+- [ ] **`trust_anchors` is empty in every build, so no device is campaign-verified and no vouch is accepted.** Vouching, revocation and beaconing are all written and all inert until B's Phase 4 credential issuing lands. Not a bug and not a placeholder to "fix" locally — a bypass here would defeat the whole web of trust. **Needs B.**
+- [ ] **`NodeTrust` has no value for the two-vouch "full trust" promotion.** Context doc §2.2 describes it; `CLAIM_SCHEMA.md` §11 fixes the enum at three values. Expressed as a capability for now (`canPledgeResources`) rather than adding a fourth value, because §11 needs all three of us. **Team sync.**
+- [ ] **Three new tables are not in `CLAIM_SCHEMA.md` §10** — `pending_resolutions`, `vouches`, `revocations`, `trust_anchors`, added under schema version 2 (`_createMeshIdentityTables`). §10 has no single owner, so recording them needs the §12 three-person sync. **Do not edit §10 alone.**
+- [ ] **`MeshTimeGossip` does a weighted average, not the median Wk4 D4 specifies.** `data/` is B's; raised rather than reimplemented.
+- [ ] **Beacon interval (60s) and gradient entry lifetime (5 min) are placeholders.** Both are Wk4 D5 tuning against battery numbers that do not exist. So is `BeaconIngestion.minRelayInterval` (20s).
+- [ ] **Manual resolve: does it archive immediately, or resolve and let §6.4's window archive it?** §6.3 says "archives rather than clears"; implemented as `status = resolved` on the reading that this means *the record survives*, not *skip to ARCHIVED*. **Confirm with B** — it is on the Wk3 D4 list.
 - [ ] `hopLimit` default per message type — **TBD pending Phase 0 range data.** Don't let anyone pick a number before that lands. **A provisional `10` is now in `ClaimFactory.provisionalHopLimit`** — named, not inlined, so the real value is a one-line change. Still a placeholder, not a decision.
 - [ ] **Two provisional hop limits now exist, in two folders.** `ClaimFactory.provisionalHopLimit = 10` stamps the stored `Claim.hopLimit` (B's `data/`); `RoutingPolicy.initialHopLimitFor()` stamps the envelope at transmission (my `mesh/`) with 8/5/3 by type. The wire value governs propagation, so nothing is broken today — but a locally raised SOS is stored saying 10 and sent saying 8, and that is exactly the kind of quiet disagreement §7 warns about. **Do not fix by editing across folders unilaterally** — routing is mine, the stored field is B's, and per-type vs single-value is a schema question. Settle with B, and note that a per-type answer touches `CLAIM_SCHEMA.md`.
 - [ ] `SeenMessageCache.maxEntries` — provisional `2000`. Depends on real traffic rates nobody has measured. Deliberately generous: evicting too eagerly re-admits messages still in flight, which costs duplicate relays, not lost data.
