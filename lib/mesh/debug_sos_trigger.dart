@@ -10,6 +10,8 @@ import '../data/models/claim.dart';
 import '../data/models/claim_payload.dart';
 import '../data/enums.dart';
 import '../data/models/geo_point.dart';
+import '../data/time/decay.dart';
+import '../flows/rescue/sos_origination.dart';
 import 'mesh_node.dart';
 
 /// Raises a real, signed SOS with no UI involved.
@@ -42,11 +44,86 @@ class DebugSosTrigger {
   /// Change these and you stop testing the thing worth testing.
   static const GeoPoint testLocation = GeoPoint(lat: 12.9716, lon: 77.5946);
 
-  /// Builds, signs, stores and queues one SOS.
+  /// Builds, signs, stores and queues one individual SOS.
   ///
   /// Returns the claim id so it can be matched against the other phone's store.
-  static Future<String?> raise(MeshNode node) =>
-      _raise(node, const SosPayload(location: testLocation), 'SOS');
+  static Future<String?> raise(MeshNode node) => _raiseSos(
+        node,
+        const SosPayload(location: testLocation),
+        'SOS',
+      );
+
+  /// Group SOS — the same claim carrying a `HeadcountBucket` (PERSON_A.md
+  /// Wk3 D1).
+  ///
+  /// Worth raising alongside the individual one during a bring-up run: it
+  /// gets a **different** id despite the identical location, because SOS ids
+  /// come from `hash(originDeviceId + sequence)` and never from the bucket
+  /// (§2.1). Two pins here, not one, is the thing to look for.
+  static Future<String?> raiseGroup(MeshNode node) => _raiseSos(
+        node,
+        const SosPayload(
+          location: testLocation,
+          headcount: HeadcountBucket.sixToFifteen,
+        ),
+        'GROUP SOS',
+      );
+
+  /// Proxy SOS — raised on behalf of someone whose phone is dead or absent.
+  ///
+  /// Carries `reporterDeviceId` and a location the reporter marked, rather
+  /// than one the person in danger sensed.
+  static Future<String?> raiseProxy(MeshNode node) => _raiseSos(
+        node,
+        SosProxyPayload(
+          location: testLocation,
+          reporterDeviceId: node.keyPair.deviceId,
+          proxyNote: 'debug proxy',
+        ),
+        'PROXY SOS',
+      );
+
+  /// All three SOS sub-types through the real origination path.
+  ///
+  /// Raised back to back on purpose: three claims, three distinct ids, one
+  /// geohash bucket. That is CLAUDE.md §6.2's most important test as it looks
+  /// on real hardware, and the failure it guards against — three pins
+  /// collapsing into one — is visible from the map without any tooling.
+  static Future<void> raiseSosSuite(MeshNode node) async {
+    await raise(node);
+    await raiseGroup(node);
+    await raiseProxy(node);
+  }
+
+  /// Raises an SOS through `SosOrigination` — the same path the real rescue
+  /// flow uses, rather than a second implementation of it.
+  ///
+  /// The point of a bring-up trigger is to exercise the code that ships. When
+  /// this file carried its own copy of the sign-rebuild-store dance, a bug in
+  /// either copy was invisible from the other.
+  static Future<String?> _raiseSos(
+    MeshNode node,
+    ClaimPayload payload,
+    String label,
+  ) async {
+    if (!enabled) return null;
+
+    final result = await SosOrigination(
+      node: node,
+      repository: ClaimRepository(),
+    ).raise(payload);
+
+    final claim = result.claim;
+    if (claim == null) {
+      debugPrint('[mayday.mesh] DEBUG $label failed: ${result.failure?.name}');
+      return null;
+    }
+
+    debugPrint('[mayday.mesh] DEBUG $label raised: id=${claim.id} '
+        'origin=${claim.originDeviceId} seq=${claim.originSequence} '
+        'trust=${claim.claimTrust.name} hopLimit=${result.envelope!.hopLimit}');
+    return claim.id;
+  }
 
   /// Raises a hazard at the same spot, which is the CORROBORATION test.
   ///
@@ -71,6 +148,11 @@ class DebugSosTrigger {
         'HAZARD',
       );
 
+  /// Hazard and resource claims only — SOS goes through [_raiseSos].
+  ///
+  /// Two paths, deliberately, because the id rules are two rules (§2.1): this
+  /// one produces a merge hash, and unifying them would be the exact
+  /// "simplification" CLAUDE.md §5.3 warns about.
   static Future<String?> _raise(
     MeshNode node,
     ClaimPayload payload,
@@ -96,10 +178,12 @@ class DebugSosTrigger {
       cbor.decode(envelope.body),
       originSignature: envelope.originSig,
       hopLimit: envelope.hopLimit,
-      // NULL, not a large number. SOS never decays — §2.3. A person trapped
-      // alone is UNCONFIRMED precisely because nobody is nearby to corroborate
-      // them, which is exactly why their claim must not age out.
-      displayLifetime: null,
+      // The receiver's own policy, exactly as `ClaimIngestion` applies it to
+      // an inbound claim — a locally raised hazard must not sit on the map
+      // under different rules from the same hazard heard from a neighbour.
+      // Returns null for SOS, which never decays (§2.3), and this path never
+      // carries one.
+      displayLifetime: displayLifetimeFor(claim.type),
     );
     if (stored == null) {
       debugPrint('[mayday.mesh] DEBUG $label: failed to rebuild claim');
