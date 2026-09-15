@@ -177,6 +177,44 @@ class VouchRegistry implements NodeTrustDirectory {
       return const TrustWriteResult.rejected(TrustWriteRejection.storageBound);
     }
 
+    // **Monotonic, not first-wins.** The clock on a stored vouch only ever
+    // moves forward, and only for the same (voucher, vouchee) pair.
+    //
+    // IGNORE alone was wrong, and quietly so. It was there to stop a voucher
+    // rewriting its own logical clock by re-sending — a real concern, because
+    // that clock is what a revocation is ordered against. But it also made
+    // reinstatement impossible: [_standingVouchers] says a revocation cancels
+    // vouches at or below its own counter, "so a genuine re-vouch signed
+    // afterwards stands again", and with the clock frozen at the first
+    // account, no later vouch could ever carry a higher one. That branch was
+    // unreachable, and a volunteer revoked for going home could never be made
+    // one again — on any device, ever, with no network to do it over.
+    //
+    // Forward-only is what both concerns actually want. A voucher cannot wind
+    // its clock back to escape anything, and cannot un-revoke by repeating an
+    // old message, because a replayed vouch carries its original counter. It
+    // can only do the one thing a person genuinely does: change their mind,
+    // later, and say so in a message that says when.
+    final existingRow = existing.where(
+      (r) => _hex(r['vouchee_pub_key'] as List<int>) == voucheeHex,
+    );
+    final storedCounter = existingRow.isEmpty
+        ? null
+        : existingRow.first['clock_counter'] as int;
+
+    if (storedCounter != null &&
+        vouch.logicalClock.counter <= storedCounter) {
+      // Nothing new. Not an error — the same vouch reaching one device by
+      // three mesh paths is the normal case, and must not consume the cap
+      // three times.
+      final unchanged = await _effectiveVouchees(voucherPubKey);
+      return unchanged.contains(voucheeHex)
+          ? const TrustWriteResult.applied()
+          : const TrustWriteResult.rejected(
+              TrustWriteRejection.vouchCapExceeded,
+            );
+    }
+
     await db.insert(
       'vouches',
       {
@@ -188,10 +226,10 @@ class VouchRegistry implements NodeTrustDirectory {
         'clock_device_id': vouch.logicalClock.deviceId,
         'clock_counter': vouch.logicalClock.counter,
       },
-      // IGNORE, not REPLACE: the first account of a vouch is the one that
-      // counts. Replacing would let a voucher rewrite its own logical clock
-      // by re-sending, and that clock is what a revocation is ordered against.
-      conflictAlgorithm: ConflictAlgorithm.ignore,
+      // REPLACE is safe only because of the strictly-higher-counter guard
+      // above; without it this is the clock-rewrite hole the old comment
+      // warned about. Do not lift one without the other.
+      conflictAlgorithm: ConflictAlgorithm.replace,
     );
     _cache.clear();
 
