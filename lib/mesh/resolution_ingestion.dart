@@ -6,6 +6,7 @@ import '../data/models/claim.dart';
 import '../data/time/device_clock.dart';
 import '../identity/keypair.dart';
 import '../identity/node_trust.dart';
+import 'consumed_nonces.dart';
 import 'envelope.dart';
 import 'message_handler.dart';
 import 'messages/body_codec.dart';
@@ -31,6 +32,10 @@ class ResolutionIngestion implements MessageHandler {
   final PendingResolutionStore pending;
   final DeviceClock deviceClock;
 
+  /// Rescue codes already spent here — CLAUDE.md §6.2's replay row. See
+  /// [ConsumedNonceStore] for why last-write-wins alone does not cover this.
+  final ConsumedNonceStore consumedNonces;
+
   /// Consulted to record whether the counter-signer was a volunteer.
   final NodeTrustDirectory trust;
 
@@ -54,8 +59,9 @@ class ResolutionIngestion implements MessageHandler {
     required this.pending,
     required this.deviceClock,
     required this.trust,
+    ConsumedNonceStore? consumedNonces,
     this.requireVolunteerCounterSignature = false,
-  });
+  }) : consumedNonces = consumedNonces ?? ConsumedNonceStore();
 
   @override
   Future<MessageOutcome> handle(Envelope envelope, RelayTarget? from) async {
@@ -72,6 +78,18 @@ class ResolutionIngestion implements MessageHandler {
     if (!await message.verifyRequesterSignature()) {
       return const MessageOutcome.dropped(
         'resolution: requester signature does not verify',
+      );
+    }
+
+    // A code this device has already spent. Both signatures verify — they are
+    // the same two signatures — so nothing before this point can tell a
+    // photographed QR from the original. Refused rather than applied, but
+    // still relayed: see below for why that is the safe direction.
+    if (await consumedNonces.isConsumed(message.sosId, message.nonce)) {
+      return const MessageOutcome(
+        accepted: false,
+        relay: true,
+        reason: 'resolution: nonce already spent (replay)',
       );
     }
 
@@ -127,9 +145,19 @@ class ResolutionIngestion implements MessageHandler {
     ResolutionMessage message, {
     required List<int> resolverPubKey,
   }) async {
+    // Replay, checked again here because [applyTo] is also the volunteer's
+    // own scan path (`RescueResolution.resolveFromScan`) and the parked-
+    // resolution path, neither of which comes through [handle].
+    if (await consumedNonces.isConsumed(message.sosId, message.nonce)) {
+      return false;
+    }
+
     // Last-write-wins by logical clock (§4). Two volunteers can genuinely
     // both scan — a mesh has no way to stop them — and the later
-    // counter-signature is the one that describes what happened.
+    // counter-signature is the one that describes what happened. This stays
+    // safe alongside the nonce check above precisely because two genuine
+    // scans mean two separate QR displays and therefore two different
+    // nonces; a replay is the case where the nonce is the same.
     final held = claim.resolvedAtLogical;
     if (held != null && held.compareTo(message.resolvedAtLogical) >= 0) {
       return false;
@@ -154,6 +182,11 @@ class ResolutionIngestion implements MessageHandler {
     // of how it was handled.
     await repository.updateClaim(claim);
     await pending.discard(claim.id);
+
+    // Spent only once it has actually changed something. Recording it earlier
+    // — on receipt, say — would let a resolution that lost the logical-clock
+    // race burn the nonce of the one that won.
+    await consumedNonces.consume(message.sosId, message.nonce);
     return true;
   }
 

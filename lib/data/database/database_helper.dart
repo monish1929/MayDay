@@ -17,7 +17,7 @@ class DatabaseHelper {
   /// upgrade that dropped and recreated the store would delete active SOS
   /// records, which CLAUDE.md §1.1 forbids outright — so [_upgradeDB] only
   /// ever adds tables, and there is deliberately no destructive branch in it.
-  static const int schemaVersion = 2;
+  static const int schemaVersion = 3;
 
   Future<Database> get database async {
     if (_database != null) return _database!;
@@ -97,12 +97,16 @@ class DatabaseHelper {
     ''');
 
     await _createMeshIdentityTables(db);
+    await _createConsumedNonceTable(db);
   }
 
   /// Additive only. See [schemaVersion] for why there is no other kind.
   Future<void> _upgradeDB(Database db, int oldVersion, int newVersion) async {
     if (oldVersion < 2) {
       await _createMeshIdentityTables(db);
+    }
+    if (oldVersion < 3) {
+      await _createConsumedNonceTable(db);
     }
   }
 
@@ -185,6 +189,32 @@ class DatabaseHelper {
       CREATE TABLE trust_anchors (
         pub_key BLOB PRIMARY KEY,
         label   TEXT
+      );
+    ''');
+  }
+
+  /// Nonces already spent closing a rescue — CLAUDE.md §6.2's replay row.
+  ///
+  /// **Why a table and not a field on the claim.** A resolution can arrive
+  /// for a claim this device does not hold (see `pending_resolutions` above),
+  /// so there is no claim row to hang it off at the moment the decision has
+  /// to be made. It also has to outlive the claim: the whole point is that a
+  /// photographed QR presented hours later is refused, and by then the claim
+  /// may well be ARCHIVED.
+  ///
+  /// Keyed on the pair, not the nonce alone. A nonce is 16 random bytes
+  /// chosen by a stranger's phone; keying on it alone would let one device
+  /// burn an id it does not own by asserting a collision.
+  ///
+  /// **Also not yet in CLAIM_SCHEMA.md §10** — same standing gap as the four
+  /// tables above, same answer: §10 has no single owner, so recording it
+  /// needs the three-person sync. Do not edit §10 alone.
+  Future<void> _createConsumedNonceTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE consumed_resolution_nonces (
+        sos_id   TEXT NOT NULL,
+        nonce    BLOB NOT NULL,
+        PRIMARY KEY (sos_id, nonce)
       );
     ''');
   }
