@@ -119,13 +119,17 @@ class ContributeOrigination {
       );
     }
 
-    // TODO: PENDING B'S ANSWER — insertClaim currently does an unconditional
-    // ConflictAlgorithm.replace, but pledgedCount is meant to be add-only when
-    // two devices pledge into the same geohash bucket (same merge-hash id).
-    // Using plain insertClaim as a placeholder so this compiles and the
-    // sign/rebuild path is testable end-to-end. DO NOT remove this comment
-    // when swapping the real call in later — it's the marker for where B's
-    // decision plugs in.
+    // TODO: pledgedCount accumulation — STATUS AS OF 2026-09-16:
+    // Verified by A: claim_repository.dart:74 does an unconditional ConflictAlgorithm.replace,
+    // and the inbound mesh merge path (claim_ingestion.dart _merge()) has the same gap in a worse
+    // form — it silently discards conflicting resource payloads entirely rather than replacing OR
+    // adding. B has not ratified a fix after 3.5 weeks. A's recommendation (verified, not yet
+    // applied): a separate insertOrMergeResourceClaim method rather than a conditional inside
+    // insertClaim, per schema §2.1's rule against shared write paths that fork on type.
+    // Proceeding with plain insertClaim as a timeboxed, documented interim risk — pledges from
+    // different devices in the same geohash bucket will currently silently overwrite rather than
+    // accumulate. This is NOT fixed by this class alone; do not remove this comment until
+    // insertOrMergeResourceClaim (or equivalent) exists and this call is swapped to use it.
     await repository.insertClaim(stored);
 
     return ContributeOriginationResult.raised(stored, envelope);

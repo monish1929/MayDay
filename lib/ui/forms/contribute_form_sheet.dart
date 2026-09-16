@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:flutter/services.dart';
-import 'package:mayday/common/device_id.dart';
+import 'package:mayday/flows/contribute/contribute_origination.dart';
+import 'package:mayday/mesh/mesh_bootstrap.dart';
 import 'package:mayday/ui/models/models.dart';
 import 'package:mayday/ui/theme/app_theme.dart';
 
@@ -125,6 +126,25 @@ class _ContributeFormSheetState extends State<ContributeFormSheet> {
         return;
       }
 
+      // MeshNode must be available — without it, originate() cannot sign the
+      // claim, and an unsigned claim must never reach the store (§2.5).
+      final node = MeshBootstrap.node;
+      if (node == null) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text(
+              'Mesh not ready yet — please try again in a moment',
+              style: TextStyle(fontWeight: FontWeight.w600),
+            ),
+            backgroundColor: AppColors.darkRed,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          ),
+        );
+        return;
+      }
+
       GeoPoint location;
       if (_currentLocation != null) {
         location = _currentLocation!;
@@ -134,25 +154,34 @@ class _ContributeFormSheetState extends State<ContributeFormSheet> {
       }
 
       final count = _parsedCount;
-      final deviceId = await LocalDeviceId.getDeviceId();
 
-      final payload = ResourcePayload(
+      final origination = ContributeOrigination(
+        node: node,
+        repository: ClaimRepository(),
+      );
+
+      final result = await origination.pledge(
         location: location,
         category: _category,
         pledgedCount: count,
-        claimedReports: 0,
       );
 
-      // Assemble real Claim via ClaimFactory — PERSON_C.md Week 2 Day 1
-      final claim = await ClaimFactory.createClaim(
-        payload: payload,
-        originDeviceId: deviceId,
-      );
-
-      // TODO: SIGNING GAP — Claim originated with placeholder signature (Uint8List(0)).
-      // Real Ed25519 signing over claim.toSignedCoreCbor() is blocked on Phase 4
-      // identity/keypair work (lib/identity/). See CLAIM_SCHEMA.md §5 and PERSON_C.md Week 2 Day 1.
-      await ClaimRepository().insertClaim(claim);
+      if (!result.raised) {
+        debugPrint('[_ContributeFormSheetState] Origination failed: ${result.failure}');
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text(
+              'Couldn\'t save — claim signing failed, please try again',
+              style: TextStyle(fontWeight: FontWeight.w600),
+            ),
+            backgroundColor: AppColors.darkRed,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          ),
+        );
+        return;
+      }
 
       if (!mounted) return;
       Navigator.pop(context);
