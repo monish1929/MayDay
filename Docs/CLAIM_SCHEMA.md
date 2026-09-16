@@ -4,8 +4,8 @@
 
 This is the *data contract* — the exact shape of a Claim, the two identity rules, and the state machines that govern it. `CLAUDE.md` explains why these rules exist; this file is the reference for what to actually implement.
 
-Last changed by: — (fill in on every edit)
-Last changed on: — (fill in on every edit)
+Last changed by: A+B (Phase 2 pairing)
+Last changed on: 2026-08-21 — §1 gains `originSequence` (§10 always had the column; §1 had no field to fill it from) and types `originSignature` as bytes; §4 now states that the sequence counter and the logical clock are two separate counters; §9.1 gains `originPubKey` so a relay can verify a claim from a device it has never met. All three aware.
 
 ---
 
@@ -16,7 +16,8 @@ class Claim {
   String id;                        // see §2 — computed differently per type
   ClaimType type;                   // sos | sosProxy | hazardReport | resource
   String originDeviceId;
-  String originSignature;           // Ed25519, over the full signed payload — see §5
+  int originSequence;               // the SequenceCounter value used to build `id` — see §2, §4
+  Uint8List originSignature;        // Ed25519, 64 raw bytes, over the signed core — see §5
   LogicalClock logicalClock;        // see §4
 
   ClaimTrust claimTrust;            // unconfirmed | corroborated | groundConfirmed — see §3
@@ -26,14 +27,14 @@ class Claim {
   ClaimStatus status;               // active | resolved | archived — see §6
   ResolutionMethod? resolutionMethod; // qr | manual | autoExpired | null
   String? resolvedByVolunteerId;
-  DateTime? resolvedAtLogical;      // logical time, not wall clock — see §4
+  LogicalClock? resolvedAtLogical;   // logical time, not wall clock — see §4
 
   int hopLimit;                     // decrements per relay hop — see §7
-  Duration displayLifetime;         // how long it stays on the map — see §7
+  Duration? displayLifetime;         // how long it stays on the map — see §7
 
-  DateTime? createdAtLogical;
-  DateTime? lastConfirmedAtLogical;
-  DateTime? archivedAtLogical;
+  LogicalClock? createdAtLogical;
+  LogicalClock? lastConfirmedAtLogical;
+  LogicalClock? archivedAtLogical;
 
   // Type-specific payload — see §8
   ClaimPayload payload;
@@ -45,7 +46,7 @@ class Corroboration {
   String deviceId;
   int hopDistance;
   double signalStrength;
-  String firstSeenVia;              // deviceId of whoever relayed it to us — see §3.2
+  String? firstSeenVia;              // deviceId of whoever relayed it to us — see §3.2
   LogicalClock logicalClock;
   bool isVolunteer;
   CorroborationKind kind;            // independentGeneration | explicitAttestation
@@ -86,7 +87,9 @@ String mergeableClaimId(ClaimType type, String geohashBucket) =>
 UNCONFIRMED → CORROBORATED → GROUND_CONFIRMED
 ```
 
-No skipping stages. No going backward once GROUND_CONFIRMED (a volunteer physically assessed it — that doesn't get un-true).
+No skipping stages, with exactly one exception: **a volunteer physically confirming an unconfirmed claim on-site bypasses CORROBORATED and jumps directly to GROUND_CONFIRMED.** (Physical presence overrides the need for an intermediate digital attestation).
+
+No going backward once GROUND_CONFIRMED (a volunteer physically assessed it — that doesn't get un-true).
 
 ### 3.1 What moves a claim to CORROBORATED
 
@@ -131,15 +134,16 @@ class LogicalClock {
 ```
 
 - Ordering between two events from different devices: compare logical clocks. This answers "which happened more recently, relative to each other" — which is all the merge/decay logic actually needs.
+- **`logicalClock.counter` and `originSequence` are two different counters and must never be unified.** Both are monotonic per-device integers, which makes them look interchangeable; they are not. `originSequence` (`SequenceCounter`) counts only claims *this* device originated, because it is hashed into the SOS claim id (§2) and that id has to stay stable for the person who raised it. `logicalClock.counter` (`DeviceClock`) is a Lamport clock: it advances on send **and jumps to `max(local, remote) + 1` on receive**. Deriving `origin_sequence` from the logical clock means a device's SOS id would shift with unrelated mesh traffic.
 - **Mesh time gossip** (separate mechanism, for the *display* layer only): when devices meet, they exchange clock readings and maintain a running estimate of mesh-median time, weighting volunteer nodes' clocks higher.
 - UI shows **relative time only** — "about 2 hours ago." Never render a precise timestamp; it would be fabricated precision.
-- `createdAtLogical`, `lastConfirmedAtLogical`, `resolvedAtLogical`, `archivedAtLogical` are all logical-clock values, not `DateTime.now()`. Naming keeps this explicit — don't rename these to drop `Logical`.
+- `createdAtLogical`, `lastConfirmedAtLogical`, `resolvedAtLogical`, `archivedAtLogical` are all `LogicalClock` values (§1), not `DateTime.now()`. Naming keeps this explicit — don't rename these to drop `Logical`. **§1's Dart snippet previously typed these as `DateTime` — that was a drafting error, fixed 2026-08-21. This prose was always the correct rule.**
 
 ---
 
 ## 5. Signing
 
-Every claim carries `originSignature`: an Ed25519 signature by the originating device's key, over the full claim payload (excluding the signature field itself and any mutable fields like `corroborations`, `claimTrust`, `dispatchPriority` — sign the immutable core: `id`, `type`, `originDeviceId`, `logicalClock`, `payload`, `createdAtLogical`).
+Every claim carries `originSignature`: an Ed25519 signature by the originating device's key, over the full claim payload (excluding the signature field itself and any mutable fields like `corroborations`, `claimTrust`, `dispatchPriority` — sign the immutable core: `id`, `type`, `originDeviceId`, `logicalClock`, `payload`, `createdAtLogical`). `createdAtLogical` is a `LogicalClock` (§1, §4) — encode both its `deviceId` and `counter` in the signed bytes, not a single scalar.
 
 **Claims are signed, never encrypted.** Every relay must be able to read content to draw the pin, compute the geohash bucket, and corroborate. Signature ≠ encryption: it proves who sent it and that it's untampered, while leaving it fully readable.
 
@@ -195,7 +199,7 @@ For a dead/lost/damaged phone. Always tagged `resolutionMethod = manual`, always
 
 ```dart
 int hopLimit;             // how many more times this claim may be relayed
-Duration displayLifetime; // how long it stays visible on the map before decay
+Duration? displayLifetime; // how long it stays visible on the map before decay
 ```
 
 These are **not the same quantity** and must not share a variable, a config key, or a name. (v1 called both "TTL" and it caused real confusion.)
@@ -273,11 +277,14 @@ Envelope {
   kind       : uint8      // 0=claim 1=corroboration 2=resolution
                           // 3=vouch 4=revocation 5=volunteerBeacon 6=timeGossip
   body       : bytes      // CBOR, shape depends on kind
+  originPubKey : bytes(32) // Ed25519 public key of the originator
   originSig  : bytes(64)  // Ed25519 over (v || kind || body)
 }
 ```
 
 **The signature deliberately excludes `hopLimit` and `msgId`.** `hopLimit` changes at every hop — signing it would invalidate the signature after the first forward. This is why §5's "sign the immutable core" rule matters at the transport layer too.
+
+**`originPubKey` travels with every message so verification needs no prior contact.** A relay three hops out has never met the originator and there is no server to ask for a key, so a signature with no key beside it is unverifiable exactly where it matters most — the claims that travelled furthest. `originDeviceId` is a truncated hash of this key (see `identity/keypair.dart`), which also lets a receiver confirm the id inside `body` matches the key that actually signed; without that check a device could sign claims naming a neighbour, and for SOS mint ids in that neighbour's id space (§2).
 
 ### 9.2 Size budget
 
@@ -327,10 +334,16 @@ CREATE TABLE claims (
   payload             BLOB    NOT NULL,   -- CBOR, per §8
   resolution_method   INTEGER,            -- NULL while ACTIVE
   resolved_by         TEXT,
+  resolved_at_logical_device_id TEXT,     -- LogicalClock, NULL until resolved — see §4
+  resolved_at_logical_counter   INTEGER,
   hop_limit           INTEGER NOT NULL,
   display_lifetime_ms INTEGER,            -- NULL for sos / sosProxy — see below
-  created_at_logical  INTEGER NOT NULL,
-  archived_at_logical INTEGER
+  created_at_logical_device_id  TEXT    NOT NULL,  -- LogicalClock, mandatory: every claim has a creation event — see §4
+  created_at_logical_counter    INTEGER NOT NULL,
+  last_confirmed_at_logical_device_id TEXT,        -- LogicalClock, NULL until first re-confirmation
+  last_confirmed_at_logical_counter   INTEGER,
+  archived_at_logical_device_id TEXT,     -- LogicalClock, NULL until archived
+  archived_at_logical_counter   INTEGER
 );
 
 CREATE INDEX idx_claims_status_type ON claims(status, type);

@@ -24,6 +24,7 @@ Envelope _sampleEnvelope({
     hopLimit: 5,
     kind: kind,
     body: body ?? _fixedBytes(4, 0xAB),
+    originPubKey: _fixedBytes(Envelope.publicKeyLength, 0xEE),
     originSig: _fixedBytes(Envelope.signatureLength, 0xCD),
   );
 }
@@ -111,6 +112,7 @@ void main() {
         CborSmallInt(5),
         CborSmallInt(99), // no such EnvelopeKind
         CborBytes(_fixedBytes(4, 1)),
+        CborBytes(_fixedBytes(Envelope.publicKeyLength, 1)),
         CborBytes(_fixedBytes(Envelope.signatureLength, 1)),
       ])));
       final result = Envelope.decode(bytes);
@@ -124,6 +126,7 @@ void main() {
         CborSmallInt(5),
         CborSmallInt(0),
         CborBytes(_fixedBytes(4, 1)),
+        CborBytes(_fixedBytes(Envelope.publicKeyLength, 1)),
         CborBytes(_fixedBytes(Envelope.signatureLength, 1)),
       ])));
       final result = Envelope.decode(bytes);
@@ -140,6 +143,7 @@ void main() {
         hopLimit: 5,
         kind: EnvelopeKind.claim,
         body: body,
+        originPubKey: _fixedBytes(Envelope.publicKeyLength, 0xEE),
         originSig: _fixedBytes(Envelope.signatureLength, 0),
       );
       // Simulate a relay hop: fresh msgId is not applicable here (msgId
@@ -151,6 +155,7 @@ void main() {
         hopLimit: a.hopLimit - 1,
         kind: a.kind,
         body: a.body,
+        originPubKey: a.originPubKey,
         originSig: a.originSig,
       );
 

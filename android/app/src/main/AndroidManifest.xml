@@ -1,5 +1,39 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.CAMERA"/>
+    <!-- BLE mesh transport. Android 12+ (API 31+) split the old blanket
+         BLUETOOTH permission into three. `neverForLocation` on BLUETOOTH_SCAN
+         says we do not derive location from scan results, which is true and
+         stays true — the mesh never reads position off a scan. -->
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+
+    <!-- Android 11 and below, for BLE only. -->
+    <uses-permission android:name="android.permission.BLUETOOTH"
+        android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN"
+        android:maxSdkVersion="30" />
+
+    <!-- Location, uncapped, and the cap's removal is deliberate.
+         MERGE DECISION (ab/transport-data-wiring + c/app-shell) — A and C
+         should both know this changed:
+
+         `mesh/` previously capped ACCESS_FINE_LOCATION at maxSdkVersion="30",
+         reasoning that `neverForLocation` above makes it unnecessary on 31+
+         and that asking a panicking user for location during a disaster is a
+         real cost. That reasoning was right for BLE and is now beside the
+         point: `ui/` tags claims with a real GPS fix (Wk2 D5), and geolocator
+         needs ACCESS_FINE_LOCATION at runtime on every API level. With the
+         cap in place the permission is unrequestable on 31+ and every claim
+         raised on a modern phone gets no coordinates — which for an SOS means
+         a pin with no location, the one thing a rescue claim cannot lack.
+
+         The BLE half of the argument is untouched: `neverForLocation` still
+         holds, and the mesh still derives nothing from scan results. What
+         changed is that the app now has an independent, honest reason to ask.
+         COARSE is listed alongside FINE so a user who grants only approximate
+         location still gets a usable, if coarser, pin rather than none. -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-feature android:name="android.hardware.camera" android:required="false"/>
