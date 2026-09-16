@@ -187,7 +187,7 @@ class _VolunteerOpsScreenState extends State<VolunteerOpsScreen> {
         final relTime = ClaimDisplayHelpers.relativeTimeLabel(claim.createdAtLogical);
 
         return InkWell(
-          onTap: () => ClaimDetailSheet.show(context, claim),
+          onTap: () => ClaimDetailSheet.show(context, claim, isVolunteer: true),
           borderRadius: BorderRadius.circular(16),
           child: Container(
             padding: const EdgeInsets.all(16),
@@ -442,7 +442,7 @@ class _VolunteerOpsScreenState extends State<VolunteerOpsScreen> {
         final relTime = ClaimDisplayHelpers.relativeTimeLabel(claim.createdAtLogical);
 
         return InkWell(
-          onTap: () => ClaimDetailSheet.show(context, claim),
+          onTap: () => ClaimDetailSheet.show(context, claim, isVolunteer: true),
           borderRadius: BorderRadius.circular(16),
           child: Container(
             padding: const EdgeInsets.all(16),
@@ -662,7 +662,7 @@ class _VolunteerOpsScreenState extends State<VolunteerOpsScreen> {
                     final relTime = ClaimDisplayHelpers.relativeTimeLabel(claim.createdAtLogical);
 
                     return InkWell(
-                      onTap: () => ClaimDetailSheet.show(context, claim),
+                      onTap: () => ClaimDetailSheet.show(context, claim, isVolunteer: true),
                       borderRadius: BorderRadius.circular(16),
                       child: Container(
                         padding: const EdgeInsets.all(16),

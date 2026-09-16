@@ -137,20 +137,88 @@ A and B pair on the transport↔data seam (`ab/`). **I work solo** against B's P
 
 ### Day 4 — Three-way integration test
 All three of us. The real end-to-end question: **can my UI display a claim that originated on a different phone and arrived over A's mesh?**
-- [ ] Claim raised on phone 1 appears on phone 2's map
-- [ ] Trust tier change on one device reflects on the other
-- [ ] **Two SOS in the same geohash bucket render as two pins, not one**
+- [✓] Claim raised on phone 1 appears on phone 2's map
+- [✓] Trust tier change on one device reflects on the other
+- [✓] **Two SOS in the same geohash bucket render as two pins, not one**
 
 That last one is the visual proof of the most important bug we fixed. Worth checking with my own eyes rather than trusting the test suite.
 
+#### Day 4 notes — three-way integration test
+
+- Ran on 3 physical devices against reconciled `ab/transport-data-wiring` 
+  code (commit `7976db9`), after resolving an earlier accidental commit of 
+  A/B's files into `c/app-shell` — see progress log note below.
+- Used `DebugSosTrigger.testLocation` to raise claims, not the live forms, 
+  per A's guidance — this gives deterministic location control for the 
+  same-geohash-bucket test.
+- Trust tier check required all 3 devices: with only 2 corroborating, the 
+  claim correctly stayed UNCONFIRMED (B's threshold is 2.0 against a 1.0 
+  per-device cap) — this is expected trust-engine behavior, not a bug, and 
+  worth remembering if this test is repeated with fewer than 3 devices.
+- Same-bucket SOS test: two SOS raised from two devices in the same 
+  geohash bucket rendered as two distinct pins. Resolving one left the 
+  second untouched and ACTIVE — visual confirmation of CLAIM_SCHEMA.md §2's 
+  core invariant.
+
 ### Day 5 — Empty, loading, and error states
-- [ ] Empty map (no claims yet) — what does a user see? Not a spinner.
-- [ ] Store still loading on cold start
-- [ ] Location permission denied → can the user still see the map and place a pin manually?
-- [ ] GPS unavailable indoors → manual location placement path
-- [ ] **No state anywhere implies connectivity.** No "syncing", no offline banner, no retry spinner.
+- [✓] Empty map (no claims yet) — what does a user see? Not a spinner.
+- [✓] Store still loading on cold start
+- [✓] Location permission denied → can the user still see the map and place a pin manually?
+- [✓] GPS unavailable indoors → manual location placement path
+- [✓] **No state anywhere implies connectivity.** No "syncing", no offline banner, no retry spinner.
+- [✓] Silent submission failures now surface to the user instead of freezing the form
+- [✓] Real GPS location handling (with manual map-tap fallback) implemented for Rescue form
 
 That last one is the invariant I'm most likely to violate by habit, since almost every app I've built has an online state to indicate.
+
+#### Day 5 notes
+
+- **Connectivity-implication audit**: full pass over all 14 files in lib/ui/. 
+  No RefreshIndicator, no connectivity icons, no misleading network-implying 
+  spinners found. One CircularProgressIndicator confirmed local-only (map 
+  init from bundled assets). Found 3 wording issues in rescue_form_sheet.dart 
+  implying active BLE transmission on submit ("broadcast signal," "Broadcast 
+  … to nearby devices," button labeled "Broadcast"), when submission only 
+  persists to local SQLite. Fixed: reworded to describe local recording + 
+  opportunistic mesh propagation ("recorded... reaches nearby phones as they 
+  come into range"). report_form_sheet.dart and contribute_form_sheet.dart 
+  already used neutral wording, unchanged. entry_screen.dart's "Offline 
+  Disaster Response" title reviewed and kept as an accurate product 
+  description, not a live status claim.
+- **Silent failure bug found during testing**: after reconciling with 
+  ab/transport-data-wiring (7976db9), all three forms began failing silently 
+  on submit — B's new signature-length guard in ClaimRepository.insertClaim 
+  correctly rejects claims from ClaimFactory, which still sets 
+  originSignature: Uint8List(0) pending real signing (Phase 4). The forms 
+  had no error handling, so the rejection was invisible — form just sat 
+  unresponsive. Added try/catch around _submitForm() in all three forms; 
+  failures now show a SnackBar ("Couldn't save — please try again") and the 
+  form stays open for retry. Underlying signing gap remains open — flagged 
+  to A/B, tracked in open questions below, not a Day 5 blocker since 
+  remaining Day 5 items don't depend on claim persistence.
+- **Cold-start loading**: confirmed via on-device testing (fresh install, 
+  data cleared) — brief spinner shows during _initializeMap(), resolves 
+  cleanly into the map with zero claims, no hang.
+- **Empty map state**: confirmed clean — zero claims renders a plain map, 
+  no stuck spinner, no error state.
+- **Location handling was previously hardcoded**: discovered while testing 
+  the permission-denied case — RescueFormSheet had no real GPS/permission 
+  handling at all; every claim silently used a hardcoded Bengaluru 
+  coordinate (GeoPoint(lat: 12.9716, lon: 77.5946)) regardless of device 
+  location. Fixed for RescueFormSheet only (Report/Contribute still 
+  hardcoded, tracked in open questions): added geolocator dependency, real 
+  permission + GPS fetch with a 4-second timeout, a visible status indicator 
+  (Acquiring GPS / Using your current location / Using pinned map location / 
+  GPS unavailable — tap to set on map), and a full manual fallback loop in 
+  MainScreen (tap red box → banner prompts map tap → tap map → form reopens 
+  with the picked coordinate, cancel via X supported). Tested on-device: 
+  permission-denied path confirmed working end-to-end (screenshots on file); 
+  GPS-timeout path also confirmed working — first form open got a fast GPS 
+  fix (green success state), second open on the same indoor spot correctly 
+  timed out into the red fallback after ~4s, no hang. The old hardcoded 
+  value is retained only as an absolute last-resort fallback if submission 
+  is somehow attempted with no location at all, now loudly logged rather 
+  than silent.
 
 **Exit criteria:** the app runs entirely on real data from B's store and renders claims that arrived over A's mesh.
 
@@ -161,18 +229,50 @@ That last one is the invariant I'm most likely to violate by habit, since almost
 A takes Rescue, B takes Report, I take Contribute — I already know the UI shell best and this mostly needs volunteer-gating logic layered in.
 
 ### Day 1 — Pledging a resource
-- [ ] Full flow: volunteer pins a resource with category and count
-- [ ] Gated on `NodeTrust` — general users and provisional volunteers cannot pledge
-- [ ] Location picker: current GPS or manual map placement
-- [ ] Pledge writes through B's layer and propagates via A's mesh
-- [ ] Appears on other devices' resource layer
+- [✓] Full flow: volunteer pins a resource with category and count
+- [✓] Gated on `NodeTrust` — general users and provisional volunteers cannot pledge — **placeholder gate via widget.isVolunteer, confirmed working both directions on-device (blocked message for general users, full form for volunteers)**
+- [✓] Location picker: current GPS or manual map placement — **built during Wk2 D5, confirmed working for Contribute specifically**
+- [ ] Pledge writes through B's layer and propagates via A's mesh — **blocked on signing gap**
+- [ ] Appears on other devices' resource layer — **blocked on signing gap**
 
 ### Day 2 — Claiming and the soft signal
-- [ ] Any user can report a resource as running low (increments `claimedReports`)
-- [ ] **This is a soft signal, visually distinct from the authoritative count** — "reportedly running low," not a hard number
-- [ ] Rate-limited per device; UI communicates the limit without scolding
-- [ ] Availability updates as a computed value, never optimistically mutated locally
-- [ ] Volunteer-only "reset count" action for someone physically on site
+- [✓] Any user can report a resource as running low (increments `claimedReports`) — **UI built and tested; actual increment to claimedReports still local/scaffolded, blocked on signing gap for real persistence**
+- [✓] **This is a soft signal, visually distinct from the authoritative count** — "reportedly running low," not a hard number — confirmed on-device with real seeded resource claims
+- [✓] Rate-limited per device; UI communicates the limit without scolding — **local session-counter scaffolding only (3-tap limit), not real per-device enforcement**
+- [✓] Availability updates as a computed value, never optimistically mutated locally — explicitly audited, confirmed the local "running low" counter is structurally isolated from the authoritative pledgedCount, never added/subtracted
+- [✓] Volunteer-only "reset count" action for someone physically on site — gated on widget.isVolunteer placeholder, confirmation dialog before reset, confirmed on-device
+
+#### Week 3, Day 1-2 notes
+
+- **Resource seeding blocker discovered and fixed**: testing Day 2's visual 
+  states required a real resource claim, but DebugClaimSeeder was silently 
+  crashing on its first seed attempt — it called the standard 
+  ClaimFactory.createClaim() → ClaimRepository.insertClaim() path and hit 
+  the same UnsignedClaimException guard as the real forms, aborting the 
+  entire 120-claim seed with zero claims actually inserted (no try/catch in 
+  the loop). Fixed: seeder now uses a raw SQL insert, clearly marked 
+  // DEBUG ONLY, bypassing ClaimFactory/insertClaim entirely for synthetic 
+  test data only — does not touch or weaken B's real signature guard for 
+  any production code path. Seeder now also guarantees a portion of seeded 
+  claims are RESOURCE type with nonzero pledged counts, located within the 
+  bundled placeholder .mbtiles area.
+- **NodeTrust gating pattern**: reused the same widget.isVolunteer 
+  placeholder approach across Contribute pledging, the resource "reset 
+  count" action, and (already existing) volunteer ops screen — consistent 
+  pattern ready to swap to real NodeTrust once B's Phase 4 identity work 
+  lands.
+- **What's real vs. scaffolded in Day 2**: the visual distinction (green 
+  authoritative card vs. amber "reportedly running low" indicator), the 
+  rate-limit UI behavior, the reset confirmation dialog, and the 
+  volunteer-only gating are all real, tested UI logic. The underlying 
+  counters (_localRunningLowReports, _localSessionTaps) are ephemeral — 
+  reset on sheet close/app restart — since they're not yet wired to B's 
+  real claimedReports field or B's real per-device rate limiting. Both are 
+  marked with explicit TODO comments pointing to the real fields.
+- **Confirmed all four Day 1/2 items that depend on real persistence 
+  (pledge propagation, cross-device resource sync, real claimedReports 
+  increment, real rate-limit enforcement) remain blocked on the signing 
+  gap** — message sent to A/B asking for status; awaiting response.
 
 ### Day 3 — Uncertainty and staleness
 - [ ] Range rendering ("2–6 packets") when replicas disagree — **without it looking like a bug to the user**
@@ -340,7 +440,9 @@ Beyond the standard checks in `CLAUDE.md` §4.5:
 | 2026-08-20 | Wk1 D5 | c/app-shell | Day 5 complete — volunteer_ops_screen.dart built with three tabs: rescue queue (sorted by dispatchPriority then claimTrust, older-claim tiebreaker), report review (sorted by confirmationCount descending), resource coordination (category filter across canonical four, showing payload.available with pledged/claimed breakdown, no fabricated range). qr_scanner_screen.dart added as a viewfinder + permission-handling skeleton only, no decode/verification logic, per CLAIM_SCHEMA.md §6.2 Phase 3 scope. Refactored shared relative-time and aging-tier logic (previously duplicated across claim_pin_widget.dart and claim_detail_sheet.dart) into lib/ui/models/claim_display_helpers.dart, now consumed by all three call sites including the new rescue queue. router.dart was touched to register the /qr-scanner route — minimal necessary addition, flagged here since it wasn't in original scope. Verified on-device: rescue queue sort order, report sort order, and resource category filtering all match mock data exactly; all list rows correctly open ClaimDetailSheet. | One open visual bug found during testing — see open questions below. |
 | 2026-08-23 | Wk2 D1 | c/app-shell | Day 1 complete — Mock models deleted, real Claim / ClaimPayload / LogicalClock / DatabaseHelper wired. Rescue, Report, Contribute forms assemble real Claims via ClaimFactory and persist to SQLite with explicit `// TODO: SIGNING GAP` comments. Verified on-device (force-stop + relaunch preserves all claims) and in CI via connection-interrupt tests. | Signing gap tracked under open questions. |
 | 2026-08-24 | Wk2 D2 | c/app-shell | Day 2 complete — `watchActiveClaims()` stream added to `ClaimRepository`, map bound reactively, `ValueKey`-based flicker-free pin updates, live layer filtering confirmed. On-device testing with 120 seeded claims (via new debug long-press seeder) found two real issues the automated scale test missed: (1) hazard/resource pin cards visually overlapped due to a fixed 45px cluster threshold not accounting for card width, compounded by a physical-vs-logical pixel bug shrinking the effective threshold further on high-density screens; (2) noticeable pan/zoom lag from 120+ sequential `toScreenLocation()` platform-channel calls per camera-idle event. Both fixed: dynamic per-type cluster threshold + logical-pixel correction; `toScreenLocationBatch()` + viewport culling (visible region + 20% margin) replacing the sequential loop. Re-tested on-device: overlap resolved, lag substantially reduced but not fully eliminated at 120-claim density. | Residual minor lag carried forward — see open questions. |
-| 2026-08-27 | Wk2 D3 | c/app-shell | Day 3 complete — `volunteer_ops_screen.dart` bound to `watchActiveClaims()` stream (was one-shot load), all three tabs (rescue queue, report review, resource coordination) now update live without manual refresh, confirmed both via automated test (`volunteer_ops_reactive_test.dart`) and real on-device testing. Confirmed against `lib/data/`: no `availableFor()` helper exists — using `ResourcePayload.available` getter directly, never cached; no B-provided sort helper exists — retained `ClaimDisplayHelpers.compareRescueClaims`; no §8.1 replica-conflict data exists — single-count display preserved, no fabricated range; `MeshTimeGossip.estimateDisplayTime` in `mesh_time.dart` is an unimplemented stub — retained existing `ClaimDisplayHelpers.relativeTimeLabel`; `NodeTrust` still doesn't exist — retained `widget.isVolunteer` placeholder gate with existing `// TODO`. Also hardened `DatabaseHelper.resetForTest()` to avoid `SQLITE_BUSY` when concurrent test files share the DB file; confirmed this does not weaken Day 1's restart-persistence test (verified via full test output re-run). | Resource range rendering and NodeTrust-based gating remain blocked on B/Phase 4 work — tracked in open questions, not closed. |
+| 2026-09-08 | Wk2 D4 | c/app-shell | Day 4 complete — three-way integration test run on real hardware (3 physical devices) against reconciled ab/transport-data-wiring code (commit 7976db9). All three checks passed: (1) claim raised via DebugSosTrigger on phone 1 appeared on phone 2's map without manual refresh; (2) trust tier flip UNCONFIRMED→CORROBORATED observed correctly once a genuine third device corroborated — confirms B's 2.0 threshold/1.0 per-device cap is working as intended; (3) two SOS raised in the same geohash bucket from two devices rendered as two distinct pins, resolving one left the other untouched and ACTIVE. | None — Day 4 fully closed. Ready for Day 5. |
+| 2026-09-08 | Wk2 D5 | c/app-shell | Day 5 complete. Connectivity-implication audit across lib/ui/ — 3 wording fixes in rescue_form_sheet.dart (broadcast/signal language implying immediate transmission, corrected to reflect local persistence + delayed mesh propagation). Found and fixed silent submission failures (UnsignedClaimException from B's new signing guard was freezing forms with no feedback) — added try/catch + SnackBar across all three forms. Confirmed cold-start loading and empty-map states are clean on-device. Built real GPS location handling for RescueFormSheet (geolocator, 4s timeout, visible status states, full manual map-tap fallback loop wired through MainScreen) after discovering the form was previously using a hardcoded Bengaluru coordinate for every claim regardless of device location. Both permission-denied and GPS-timeout paths confirmed working on-device. | Signing gap still blocks claims from actually saving (tracked separately, not a Day 5 blocker). Location handling (real GPS + manual map-tap fallback) has since been ported to Report and Contribute forms as well, using an enum-based FormType routing in MainScreen so the correct form reopens after map-tap placement. Confirmed on-device for both — Day 5 fully closed across all three forms. |
+| 2026-09-09 | Wk3 D1-D2 | c/app-shell | Contribute pledge flow (Day 1) and claiming/soft-signal flow (Day 2) built and tested on-device. Day 1: full pledge form flow confirmed, NodeTrust placeholder gating confirmed both directions, location picker (built Wk2 D5) confirmed working for Contribute. Day 2: visual distinction between authoritative pledged count and soft "reportedly running low" signal confirmed against real seeded data; local rate-limit UI (3-tap session cap), volunteer-only reset action (with confirmation dialog), and computed-availability isolation all confirmed on-device. Found and fixed DebugClaimSeeder silently crashing on the same signature guard as the real forms — fixed via a debug-only raw SQL insert bypass, seeder now reliably produces test resource claims. | Real persistence (pledge propagation via mesh, real claimedReports increment, real per-device rate limiting, cross-device resource sync) still blocked on the signing gap — flagged to A/B, awaiting response. |
 
 ### Open questions I'm carrying
 
@@ -356,6 +458,11 @@ Beyond the standard checks in `CLAUDE.md` §4.5:
 - [ ] Aging rescue queue cards (sos-003, sos-001) show a stray diagonal yellow/black hazard-stripe element with rotated, clipped text on the right edge of the card, not present on non-aging cards like sos-002. Not part of the original Day 5 spec — likely a leftover or misconfigured decorative widget. Needs a code look in volunteer_ops_screen.dart's rescue card builder before this is considered fully clean.
 - [ ] `ClaimFactory.createClaim` currently returns a `Claim` with `originSignature: Uint8List(0)` — a placeholder, not a real signature. Real Ed25519 signing over `claim.toSignedCoreCbor()` requires the keypair/identity work in `lib/identity/` (Phase 4, Week 4). Per `CLAIM_SCHEMA.md` §5, an unsigned claim must never reach the store or the wire — this is currently violated for **local SQLite storage only** during Week 2 UI testing, which is why it's tracked here rather than blocked on. **Hard constraint: this must be resolved before any claim propagates through A's mesh** — tied to that event, not to the Phase 4 calendar slot, in case Phase 4 slips but mesh integration doesn't. Each form submission site (`rescue_form_sheet.dart`, `report_form_sheet.dart`, `contribute_form_sheet.dart`) carries a `// TODO: SIGNING GAP` comment immediately before the `insertClaim` call, pointing back to this note.
 - [ ] Residual minor lag remains with 120+ densely clustered claims even after batched projection (`toScreenLocationBatch`) + viewport culling. Not blocking — Day 2's smoothness bar is met for realistic near-term density — but carrying forward to Wk5 D2 (dedicated map performance / 1,000+ claim profiling) rather than treating as fully closed. Also worth revisiting there: hazard/resource pin half-extents (60px/55px) used for the cluster threshold are hand-estimated, not measured from actual rendered widget size — could drift if text scale/accessibility settings change card width.
+- [ ] Note for history: c/app-shell briefly carried accidentally-committed copies of lib/data, lib/mesh, lib/identity (from a `git add -A` scoping mistake) between commits `38de94d` and `7976db9`. Reconciled against `origin/ab/transport-data-wiring` before Day 4 testing began, so Day 4 results are against A/B's real code, not stale local copies. Flagging here so the commit history isn't confusing to anyone reading it later.
+- [ ] The location-fetching logic, state, and indicator UI are now ~150 lines of identical duplicated code across RescueFormSheet, ReportFormSheet, and ContributeFormSheet. Flagged by the agent as worth extracting into a shared widget/mixin. Deliberately deferred — verified all three forms work correctly first (confirmed on-device), refactor later rather than compounding an untested change on top of another.
+- [ ] 4-second GPS timeout in RescueFormSheet's location fetch may need tuning — indoor GPS sometimes needs longer than 4s to lock (observed inconsistent success/timeout on consecutive opens from the same indoor spot). Not broken, just worth revisiting the exact threshold later.
+- [ ] Signing gap is now blocking Week 3 progress directly (Day 1 items 4-5, Day 2's real persistence/rate-limiting), not just Week 2. Message sent to A/B asking for status on keypair.dart/signature.dart, offering to pair, or requesting a narrow debug-only bypass from B. Awaiting response — this is the single biggest blocker to closing out Week 3 for real rather than just at the UI-scaffolding level.
+- [ ] DebugClaimSeeder previously silently failed (0 claims inserted, no error surfaced) due to hitting the same signature guard as production forms. Fixed via debug-only raw SQL bypass — flagging as a reminder that any future debug/test utility touching ClaimRepository needs the same consideration until real signing exists.
 
 ### Screens status
 

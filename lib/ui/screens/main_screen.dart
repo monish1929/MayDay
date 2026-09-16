@@ -54,6 +54,8 @@ class MainScreenClusterItem {
   MainScreenClusterItem({required this.claims, required this.screenPoint});
 }
 
+enum FormType { none, rescue, report, contribute }
+
 class _MainScreenState extends State<MainScreen> {
   /// Emergency layer (SOS + hazard) or Resource layer.
   /// Toggle built in Day 4 — PERSON_C.md §3 Day 4.
@@ -89,6 +91,8 @@ class _MainScreenState extends State<MainScreen> {
   /// Prevents the overlay from recalculating on every intermediate idle
   /// event that MapLibre emits during a fling/deceleration.
   Timer? _projectionDebounce;
+
+  FormType _pickingLocationFor = FormType.none;
 
   @override
   void initState() {
@@ -477,6 +481,21 @@ class _MainScreenState extends State<MainScreen> {
                     // Debounced — coalesces rapid idle events during fling/deceleration.
                     _scheduleProjection();
                   },
+                  onMapClick: (Point<double> point, LatLng latLng) {
+                    if (_pickingLocationFor != FormType.none) {
+                      final form = _pickingLocationFor;
+                      setState(() => _pickingLocationFor = FormType.none);
+                      final geo = GeoPoint(lat: latLng.latitude, lon: latLng.longitude);
+                      
+                      if (form == FormType.rescue) {
+                        RescueFormSheet.show(context, location: geo);
+                      } else if (form == FormType.report) {
+                        ReportFormSheet.show(context, location: geo);
+                      } else if (form == FormType.contribute) {
+                        ContributeFormSheet.show(context, location: geo);
+                      }
+                    }
+                  },
                 )
               : Center(
                   child: _mapError != null
@@ -501,13 +520,56 @@ class _MainScreenState extends State<MainScreen> {
           // Rendered on top of the MapLibre surface in Flutter widget tree
           if (_mapReady) ..._buildPinOverlayWidgets(),
 
+          // ─── Map Picking Banner ───────────────────────────────────
+          if (_pickingLocationFor != FormType.none)
+            Positioned(
+              top: MediaQuery.of(context).padding.top + 16,
+              left: 16,
+              right: 16,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                decoration: BoxDecoration(
+                  color: AppColors.deepNavy,
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: [
+                    BoxShadow(color: Colors.black.withAlpha(50), blurRadius: 10, offset: const Offset(0, 4)),
+                  ],
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.touch_app, color: Colors.white, size: 24),
+                    const SizedBox(width: 12),
+                    const Expanded(
+                      child: Text(
+                        'Tap the map to set your location',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close, color: Colors.white),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                      onPressed: () {
+                        setState(() => _pickingLocationFor = FormType.none);
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
           // ─── Bottom Action Bar (Day 3) ───────────────────────────
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
-            child: _buildBottomActions(context),
-          ),
+          if (_pickingLocationFor == FormType.none)
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: _buildBottomActions(context),
+            ),
         ],
       ),
     );
@@ -536,7 +598,7 @@ class _MainScreenState extends State<MainScreen> {
             key: ValueKey(item.claim.id),
             claim: item.claim,
             onTap: () {
-              ClaimDetailSheet.show(context, item.claim);
+              ClaimDetailSheet.show(context, item.claim, isVolunteer: widget.isVolunteer);
             },
           ),
         ),
@@ -558,7 +620,7 @@ class _MainScreenState extends State<MainScreen> {
             key: ValueKey('cluster_$clusterId'),
             claims: cluster.claims,
             onTap: () {
-              ClaimDetailSheet.showCluster(context, cluster.claims);
+              ClaimDetailSheet.showCluster(context, cluster.claims, isVolunteer: widget.isVolunteer);
             },
           ),
         ),
@@ -681,8 +743,11 @@ class _MainScreenState extends State<MainScreen> {
             iconColor: AppColors.darkRed,
             bgColor: AppColors.redLight,
             borderColor: AppColors.darkRed.withAlpha(120),
-            onTap: () {
-              RescueFormSheet.show(context);
+            onTap: () async {
+              final result = await RescueFormSheet.show(context);
+              if (result == 'pick_location') {
+                setState(() => _pickingLocationFor = FormType.rescue);
+              }
             },
           ),
 
@@ -694,8 +759,11 @@ class _MainScreenState extends State<MainScreen> {
             iconColor: AppColors.amberDark,
             bgColor: AppColors.amberLight,
             borderColor: AppColors.amberYellow,
-            onTap: () {
-              ReportFormSheet.show(context);
+            onTap: () async {
+              final result = await ReportFormSheet.show(context);
+              if (result == 'pick_location') {
+                setState(() => _pickingLocationFor = FormType.report);
+              }
             },
           ),
 
@@ -707,7 +775,7 @@ class _MainScreenState extends State<MainScreen> {
             iconColor: AppColors.darkGreen,
             bgColor: AppColors.greenLight,
             borderColor: AppColors.darkGreen.withAlpha(120),
-            onTap: () {
+            onTap: () async {
               // TODO: This is a temporary Week 1 stand-in for `nodeTrust` which won't exist until Phase 4 (identity/vouching).
               // See PERSON_C.md §6 for details.
               if (!widget.isVolunteer) {
@@ -726,7 +794,10 @@ class _MainScreenState extends State<MainScreen> {
                 );
                 return;
               }
-              ContributeFormSheet.show(context);
+              final result = await ContributeFormSheet.show(context);
+              if (result == 'pick_location') {
+                setState(() => _pickingLocationFor = FormType.contribute);
+              }
             },
           ),
         ],

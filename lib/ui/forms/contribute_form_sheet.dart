@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:flutter/services.dart';
 import 'package:mayday/common/device_id.dart';
 import 'package:mayday/ui/models/models.dart';
@@ -13,20 +14,20 @@ import 'package:mayday/ui/theme/app_theme.dart';
 /// - Pledged count: numeric input (volunteer-written authoritative count)
 /// - On submit: constructs ResourcePayload, creates Claim via ClaimFactory, and persists via ClaimRepository
 class ContributeFormSheet extends StatefulWidget {
-  final GeoPoint initialLocation;
+  final GeoPoint? initialLocation;
 
   const ContributeFormSheet({
     super.key,
-    this.initialLocation = const GeoPoint(lat: 12.9716, lon: 77.5946),
+    this.initialLocation,
   });
 
-  static Future<void> show(BuildContext context, {GeoPoint? location}) {
+  static Future<dynamic> show(BuildContext context, {GeoPoint? location}) {
     return showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) => ContributeFormSheet(
-        initialLocation: location ?? const GeoPoint(lat: 12.9716, lon: 77.5946),
+        initialLocation: location,
       ),
     );
   }
@@ -35,9 +36,68 @@ class ContributeFormSheet extends StatefulWidget {
   State<ContributeFormSheet> createState() => _ContributeFormSheetState();
 }
 
+enum LocationStatus { fetching, success, error, manual }
+
 class _ContributeFormSheetState extends State<ContributeFormSheet> {
   ResourceCategory _category = ResourceCategory.foodWater;
   final TextEditingController _countController = TextEditingController(text: '10');
+
+  LocationStatus _locationStatus = LocationStatus.fetching;
+  GeoPoint? _currentLocation;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.initialLocation != null) {
+      _currentLocation = widget.initialLocation;
+      _locationStatus = LocationStatus.manual;
+    } else {
+      _fetchLocation();
+    }
+  }
+
+  Future<void> _fetchLocation() async {
+    try {
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        if (!mounted) return;
+        setState(() => _locationStatus = LocationStatus.error);
+        return;
+      }
+
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+          if (!mounted) return;
+          setState(() => _locationStatus = LocationStatus.error);
+          return;
+        }
+      }
+
+      if (permission == LocationPermission.deniedForever) {
+        if (!mounted) return;
+        setState(() => _locationStatus = LocationStatus.error);
+        return;
+      }
+
+      Position position = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          timeLimit: Duration(seconds: 4),
+        ),
+      );
+
+      if (!mounted) return;
+      setState(() {
+        _currentLocation = GeoPoint(lat: position.latitude, lon: position.longitude);
+        _locationStatus = LocationStatus.success;
+      });
+    } catch (e) {
+      debugPrint('[_ContributeFormSheetState] Location fetch failed: $e');
+      if (!mounted) return;
+      setState(() => _locationStatus = LocationStatus.error);
+    }
+  }
 
   @override
   void dispose() {
@@ -59,41 +119,70 @@ class _ContributeFormSheetState extends State<ContributeFormSheet> {
   }
 
   Future<void> _submitForm() async {
-    final count = _parsedCount;
-    final deviceId = await LocalDeviceId.getDeviceId();
+    try {
+      if (_locationStatus == LocationStatus.fetching) {
+        // Still acquiring GPS, prevent submission
+        return;
+      }
 
-    final payload = ResourcePayload(
-      location: widget.initialLocation,
-      category: _category,
-      pledgedCount: count,
-      claimedReports: 0,
-    );
+      GeoPoint location;
+      if (_currentLocation != null) {
+        location = _currentLocation!;
+      } else {
+        debugPrint('[_ContributeFormSheetState] WARNING: Using placeholder Bengaluru location as absolute last resort!');
+        location = const GeoPoint(lat: 12.9716, lon: 77.5946);
+      }
 
-    // Assemble real Claim via ClaimFactory — PERSON_C.md Week 2 Day 1
-    final claim = await ClaimFactory.createClaim(
-      payload: payload,
-      originDeviceId: deviceId,
-    );
+      final count = _parsedCount;
+      final deviceId = await LocalDeviceId.getDeviceId();
 
-    // TODO: SIGNING GAP — Claim originated with placeholder signature (Uint8List(0)).
-    // Real Ed25519 signing over claim.toSignedCoreCbor() is blocked on Phase 4
-    // identity/keypair work (lib/identity/). See CLAIM_SCHEMA.md §5 and PERSON_C.md Week 2 Day 1.
-    await ClaimRepository().insertClaim(claim);
+      final payload = ResourcePayload(
+        location: location,
+        category: _category,
+        pledgedCount: count,
+        claimedReports: 0,
+      );
 
-    if (!mounted) return;
-    Navigator.pop(context);
+      // Assemble real Claim via ClaimFactory — PERSON_C.md Week 2 Day 1
+      final claim = await ClaimFactory.createClaim(
+        payload: payload,
+        originDeviceId: deviceId,
+      );
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          'Pledged and registered $count units of ${_categoryLabel(_category)}',
-          style: const TextStyle(fontWeight: FontWeight.w600),
+      // TODO: SIGNING GAP — Claim originated with placeholder signature (Uint8List(0)).
+      // Real Ed25519 signing over claim.toSignedCoreCbor() is blocked on Phase 4
+      // identity/keypair work (lib/identity/). See CLAIM_SCHEMA.md §5 and PERSON_C.md Week 2 Day 1.
+      await ClaimRepository().insertClaim(claim);
+
+      if (!mounted) return;
+      Navigator.pop(context);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Pledged and registered $count units of ${_categoryLabel(_category)}',
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+          backgroundColor: AppColors.darkGreen,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
         ),
-        backgroundColor: AppColors.darkGreen,
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-      ),
-    );
+      );
+    } catch (e, st) {
+      debugPrint('[_ContributeFormSheetState] _submitForm error: $e\n$st');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text(
+            'Couldn\'t save — please try again',
+            style: TextStyle(fontWeight: FontWeight.w600),
+          ),
+          backgroundColor: AppColors.darkRed,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ),
+      );
+    }
   }
 
   @override
@@ -223,6 +312,8 @@ class _ContributeFormSheetState extends State<ContributeFormSheet> {
             ),
 
             const SizedBox(height: 20),
+            _buildLocationIndicator(),
+            const SizedBox(height: 20),
 
             // ─── Pledged Count Input ────────────────────────────────
             const Text(
@@ -335,6 +426,78 @@ class _ContributeFormSheetState extends State<ContributeFormSheet> {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildLocationIndicator() {
+    IconData icon;
+    String text;
+    Color color;
+    bool isInteractive = false;
+
+    switch (_locationStatus) {
+      case LocationStatus.fetching:
+        icon = Icons.location_searching;
+        text = 'Acquiring GPS...';
+        color = AppColors.secondaryText;
+        break;
+      case LocationStatus.success:
+        icon = Icons.my_location;
+        text = 'Using your current location';
+        color = AppColors.darkGreen;
+        break;
+      case LocationStatus.manual:
+        icon = Icons.pin_drop;
+        text = 'Using pinned map location';
+        color = AppColors.darkGreen;
+        break;
+      case LocationStatus.error:
+        icon = Icons.location_off;
+        text = 'GPS unavailable. Tap here to set location on map.';
+        color = AppColors.darkRed;
+        isInteractive = true;
+        break;
+    }
+
+    Widget content = Row(
+      children: [
+        Icon(icon, size: 16, color: color),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            text,
+            style: TextStyle(
+              color: color,
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      ],
+    );
+
+    if (isInteractive) {
+      return GestureDetector(
+        onTap: () => Navigator.pop(context, 'pick_location'),
+        child: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: AppColors.redLight,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppColors.darkRed.withAlpha(50)),
+          ),
+          child: content,
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppColors.borderSubtle.withAlpha(100),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: content,
     );
   }
 

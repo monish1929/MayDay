@@ -3,49 +3,84 @@ import 'package:mayday/ui/models/models.dart';
 import 'package:mayday/ui/theme/app_theme.dart';
 
 /// Bottom sheet displaying the details of a tapped claim or cluster — PERSON_C.md §3 Day 4.
-class ClaimDetailSheet extends StatelessWidget {
+///
+/// Converted from StatelessWidget to StatefulWidget to support the local
+/// "report running low" temporary state on resource details (Week 3 Day 2 scaffolding).
+class ClaimDetailSheet extends StatefulWidget {
   final Claim? singleClaim;
   final List<Claim>? clusterClaims;
+  final bool isVolunteer;
 
   const ClaimDetailSheet.single({
     super.key,
     required Claim claim,
+    this.isVolunteer = false,
   })  : singleClaim = claim,
         clusterClaims = null;
 
   const ClaimDetailSheet.cluster({
     super.key,
     required List<Claim> claims,
+    this.isVolunteer = false,
   })  : singleClaim = null,
         clusterClaims = claims;
 
-  static Future<void> show(BuildContext context, Claim claim) {
+  static Future<void> show(BuildContext context, Claim claim, {bool isVolunteer = false}) {
     return showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (context) => ClaimDetailSheet.single(claim: claim),
+      builder: (context) => ClaimDetailSheet.single(claim: claim, isVolunteer: isVolunteer),
     );
   }
 
-  static Future<void> showCluster(BuildContext context, List<Claim> claims) {
+  static Future<void> showCluster(BuildContext context, List<Claim> claims, {bool isVolunteer = false}) {
     return showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (context) => ClaimDetailSheet.cluster(claims: claims),
+      builder: (context) => ClaimDetailSheet.cluster(claims: claims, isVolunteer: isVolunteer),
     );
+  }
+
+  @override
+  State<ClaimDetailSheet> createState() => _ClaimDetailSheetState();
+}
+
+class _ClaimDetailSheetState extends State<ClaimDetailSheet> {
+  // TODO: WIRE TO B'S claimedReports FIELD — This is purely local, temporary
+  // state so the visual distinction between authoritative count and soft
+  // "running low" signal can be reviewed and tested. This counter resets
+  // every time the sheet is opened. Once B's data layer exposes a real
+  // incrementClaimedReports() method on ClaimRepository, replace this
+  // with a call to that method and read claimedReports from the Claim's
+  // ResourcePayload instead.
+  int _localRunningLowReports = 0;
+  
+  // TODO: WIRE TO B'S REAL RATE-LIMITING ONCE AVAILABLE - This is temporary local-only logic
+  int _localSessionTaps = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    // Seed the local counter from the payload's existing claimedReports
+    // so the UI reflects whatever the data layer already has.
+    if (widget.singleClaim != null &&
+        widget.singleClaim!.payload is ResourcePayload) {
+      _localRunningLowReports =
+          (widget.singleClaim!.payload as ResourcePayload).claimedReports;
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
 
-    if (clusterClaims != null) {
-      return _buildClusterView(context, clusterClaims!, bottomInset);
+    if (widget.clusterClaims != null) {
+      return _buildClusterView(context, widget.clusterClaims!, bottomInset);
     }
 
-    return _buildSingleClaimView(context, singleClaim!, bottomInset);
+    return _buildSingleClaimView(context, widget.singleClaim!, bottomInset);
   }
 
   Widget _buildClusterView(
@@ -421,33 +456,207 @@ class ClaimDetailSheet extends StatelessWidget {
     // Range display ('2–6 packets') is blocked on B's replica-conflict
     // data (CLAIM_SCHEMA.md §8.1) — not available in Week 1 mock data.
     // Showing single available count until real uncertainty data exists.
-    final availableText = '${payload.available}';
+    final hasLowReports = _localRunningLowReports > 0;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // ─── Authoritative Pledged Count (primary, confident figure) ───
         Row(
           children: [
             const Icon(Icons.inventory_2_outlined, size: 15, color: AppColors.darkGreen),
             const SizedBox(width: 6),
             Text(
-              '${payload.category.name.toUpperCase()} — $availableText Units Available',
+              payload.category.name.toUpperCase(),
               style: const TextStyle(
                 color: AppColors.darkGreen,
                 fontSize: 13,
-                fontWeight: FontWeight.w700,
+                fontWeight: FontWeight.w800,
               ),
             ),
           ],
         ),
-        const SizedBox(height: 4),
-        Text(
-          'Authoritative pledged: ${payload.pledgedCount} | User claimed reports: ${payload.claimedReports}',
-          style: const TextStyle(
-            color: AppColors.secondaryText,
-            fontSize: 11,
+        const SizedBox(height: 8),
+        // Big authoritative number — this is the hard, confident count
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            color: AppColors.greenLight,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: AppColors.darkGreen.withAlpha(60)),
+          ),
+          child: Row(
+            children: [
+              Text(
+                '${payload.pledgedCount}',
+                style: const TextStyle(
+                  color: AppColors.darkGreen,
+                  fontSize: 22,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text(
+                  'units pledged (authoritative)',
+                  style: TextStyle(
+                    color: AppColors.darkGreen,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
+
+        // ─── Soft "Running Low" Indicator (only if reports exist) ──────
+        if (hasLowReports) ...[
+          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: AppColors.amberLight,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: AppColors.amberYellow.withAlpha(120)),
+            ),
+            child: Row(
+              children: [
+                const Icon(
+                  Icons.trending_down_rounded,
+                  size: 16,
+                  color: AppColors.amberDark,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Reportedly running low ($_localRunningLowReports ${_localRunningLowReports == 1 ? 'report' : 'reports'})',
+                    style: const TextStyle(
+                      color: AppColors.amberDark,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                      fontStyle: FontStyle.italic,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+
+        const SizedBox(height: 10),
+
+        // ─── "Report Running Low" Action ───────────────────────────────
+        // Available to ANY user — not gated by volunteer status.
+        // TODO: WIRE TO B'S REAL RATE-LIMITING ONCE AVAILABLE — Once B's data layer supports it, hook in
+        // per-device rate-limiting here to prevent a single device from
+        // spamming the running-low counter. For now, there's no guard
+        // beyond the local state resetting when the sheet closes.
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            onPressed: _localSessionTaps >= 3 ? null : () {
+              // TODO: WIRE TO B'S claimedReports FIELD — Replace this local
+              // setState with a real call to B's incrementClaimedReports()
+              // on ClaimRepository once it exists. This is purely local state
+              // so the UI treatment can be reviewed. No ClaimFactory or
+              // ClaimRepository calls here.
+              setState(() {
+                _localRunningLowReports++;
+                _localSessionTaps++;
+              });
+            },
+            icon: Icon(
+              Icons.trending_down_rounded,
+              size: 16,
+              color: _localSessionTaps >= 3 ? AppColors.secondaryText : AppColors.amberDark,
+            ),
+            label: Text(
+              _localSessionTaps >= 3 
+                  ? "You've already reported this — thanks, we've got it" 
+                  : 'Report running low',
+              style: TextStyle(
+                color: _localSessionTaps >= 3 ? AppColors.secondaryText : AppColors.amberDark,
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            style: OutlinedButton.styleFrom(
+              side: BorderSide(
+                color: _localSessionTaps >= 3 
+                    ? AppColors.borderMedium 
+                    : AppColors.amberYellow.withAlpha(150),
+              ),
+              backgroundColor: _localSessionTaps >= 3 
+                  ? AppColors.borderSubtle 
+                  : AppColors.amberLight.withAlpha(80),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+              padding: const EdgeInsets.symmetric(vertical: 10),
+            ),
+          ),
+        ),
+
+        // ─── Volunteer "Reset count" Action ────────────────────────────
+        if (widget.isVolunteer && hasLowReports) ...[
+          const SizedBox(height: 10),
+          // TODO: This is a temporary Week 1 stand-in for `nodeTrust` which won't exist until Phase 4 (identity/vouching).
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: () async {
+                final confirm = await showDialog<bool>(
+                  context: context,
+                  builder: (context) => AlertDialog(
+                    title: const Text('Reset report count?'),
+                    content: const Text(
+                      'Are you sure you want to reset the running low reports to 0? This indicates that you have physically confirmed stock is fine.',
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(context, false),
+                        child: const Text('Cancel'),
+                      ),
+                      TextButton(
+                        onPressed: () => Navigator.pop(context, true),
+                        child: const Text('Reset'),
+                      ),
+                    ],
+                  ),
+                );
+
+                if (confirm == true) {
+                  setState(() {
+                    _localRunningLowReports = 0;
+                    _localSessionTaps = 0;
+                  });
+                }
+              },
+              icon: const Icon(
+                Icons.refresh,
+                size: 16,
+                color: AppColors.darkGreen,
+              ),
+              label: const Text(
+                'Reset report count',
+                style: TextStyle(
+                  color: AppColors.darkGreen,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              style: OutlinedButton.styleFrom(
+                side: BorderSide(color: AppColors.darkGreen.withAlpha(150)),
+                backgroundColor: AppColors.greenLight.withAlpha(80),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                padding: const EdgeInsets.symmetric(vertical: 10),
+              ),
+            ),
+          ),
+        ],
       ],
     );
   }
