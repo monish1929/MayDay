@@ -105,7 +105,7 @@ Phases 0–4 are merged. `main` carries B's Phase 1 data layer, A's Phase 2–4 
 | Person | Owns this week | Deliverable |
 |---|---|---|
 | **A** | Field testing + battery (`mesh/`) | The numbers nothing else can supply: multi-device scale test, partition/rejoin, outdoor range walked to real distances, duty cycling, and the 72-hour battery figure. See `PERSON_A.md` Week 5. |
-| **B** | **Unassigned — see below** | `data/` has four open decisions waiting on an owner (§3.4). |
+| **B** | Resource counters + attestation provenance (`data/`) | The four open decisions in §3.4 — per-device pledge rows, range semantics, `pledgedBy`, and `firstSeenVia` for local attestation. C's UI is built and waiting on these. |
 | **C** | Real tiles, polish, field testing (`ui/`) | Offline `.mbtiles` for a real area, accessibility pass, and the UI half of the field test. See `PERSON_C.md` Week 5. |
 
 Each person has a per-track task list and progress log — `Docs/PERSON_A.md`, `Docs/PERSON_B.md`, `Docs/PERSON_C.md`. They expand this table into checkboxes and record what actually happened. **This file stays authoritative on invariants and workflow;** if a PERSON doc contradicts it, the PERSON doc is the one that is wrong. When working on someone's track, read their file alongside this one and update its checkboxes as work lands.
@@ -130,24 +130,26 @@ Each person has a per-track task list and progress log — `Docs/PERSON_A.md`, `
 
 | Area | Owner | Required reviewer | Why |
 |---|---|---|---|
-| `mesh/` | A | **B specifically** ⚠️ | B is the one who'll notice if the wire format breaks what the schema needs. **Currently unsatisfiable — see §3.4.** |
-| `data/` | **unassigned** ⚠️ | **A specifically** | Was B's. See §3.4 before touching it. |
+| `mesh/` | A | **B specifically** | B is the one who'll notice if the wire format breaks what the schema needs |
+| `data/` | B | **A specifically** | Same, in reverse |
 | `ui/` | C | whoever's flow it touches | |
 | `flows/rescue/` | A | C | Assigned in Phase 3 and delivered — all three SOS sub-types, QR resolution, replay defence. |
-| `flows/report/` | **unassigned** ⚠️ | — | Was B's in the Phase 3 split. Never started. |
+| `flows/report/` | B | A or C | Assigned in the Phase 3 split. Not started yet. |
 | `flows/contribute/` | C | A or B | |
-| `identity/` | A | **both others** ⚠️ | Opened early in Phase 2 because signing was needed, formally a Phase 4 folder. Vouching + revocation is security-sensitive and the two-reviewer rule is **currently unsatisfiable — see §3.4.** Secure key storage is still **not** built: `loadOrCreateProvisional()` writes the seed to `SharedPreferences` in plaintext. |
+| `identity/` | A | **both others** | Opened early in Phase 2 because signing was needed, formally a Phase 4 folder. Vouching + revocation is security-sensitive, so the two-reviewer rule stands. Secure key storage is still **not** built: `loadOrCreateProvisional()` writes the seed to `SharedPreferences` in plaintext. |
 | `CLAIM_SCHEMA.md` | **no single owner** | **both others, always** | Silent field renames are the most likely way this project quietly breaks |
 
-**Reviewer rules that cannot currently be met (⚠️ above) are not waived.** With one person inactive, some of these have no valid reviewer at all. Don't quietly drop the requirement: name the departure in the PR, say which rule and why, and get the one review that *is* available. Three PRs merged on 2026-09-17 under exactly this exception, including `identity/` changes that went in with one reviewer instead of two. That is a debt to settle, not a precedent to copy.
+**If a required reviewer can't get to it quickly, the rule still holds — it just waits.** Don't silently retarget a PR at whoever is free. If something genuinely cannot wait, say so in the PR: which rule you're departing from, why, and who reviewed instead. Four PRs merged on 2026-09-17 with only one reviewer available at the time, `identity/` among them — that was a scheduling exception, recorded so it can be revisited, not a new default.
 
 **Note for the agent:** with three people, "the other person" is ambiguous — always name a specific reviewer from this table, never say "get someone to review it." PRs drift toward whoever approves fastest otherwise.
 
-### 3.4 Unowned work — do not silently absorb it
+### 3.4 Open decisions in `data/` — B's, and blocking C
 
-> **This section exists because the work got done anyway, by the wrong person, and nobody noticed for a month.** If something here has no owner, say so out loud rather than quietly picking it up.
+> **This section exists because work in someone else's folder got done anyway and logged on their sheet, which made the record look healthier than it was.** If you pick up work that isn't yours, say so out loud.
 
-**`data/` currently has no active owner.** B has not committed since 2026-08-21. Their Phase 1 work is merged and sound; what stalled is everything after it. During that window `data/` changes were written by A and logged in `PERSON_B.md`, which made the record look like B was still active. **Don't do that** — if you do someone else's work, log it on your own sheet and name whose area it was.
+**These four belong to B** (`data/`, per §3.3). They are written up in full so they can be picked up cold, **not** so that someone else can quietly take them. If they need to move, move them deliberately and update §3.3 — don't let ownership drift.
+
+**The logging rule this broke:** between 2026-08-21 and 2026-09-17, some `data/` changes were written by A and recorded in `PERSON_B.md`. That misattributes the work and hides the real state of the track. **If you do work in someone else's area, log it on your own sheet and name whose area it was.** The entries from that window stay, marked.
 
 Four `data/` decisions are open and blocking C's UI (raised 2026-09-17):
 
