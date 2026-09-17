@@ -304,47 +304,71 @@ class _MainScreenState extends State<MainScreen> {
       if (_currentZoom < 11.5) {
         final List<MainScreenClusterItem> clusters = [];
         final List<MainScreenPinItem> individualPins = [];
-        final Set<int> clusteredIndices = {};
 
-        for (int i = 0; i < projectedItems.length; i++) {
-          if (clusteredIndices.contains(i)) continue;
+        // O(N^2) greedy clustering. In the worst case (e.g., 1000 well-separated claims),
+        // this scans the growing individualPins list linearly. However, at high densities,
+        // pins merge into clusters early, drastically reducing K and avoiding lag spikes.
+        for (final current in projectedItems) {
+          bool merged = false;
 
-          final current = projectedItems[i];
-          final List<Claim> group = [current.claim];
-          num totalX = current.screenPoint.x;
-          num totalY = current.screenPoint.y;
+          // 1. Check against existing clusters
+          for (int c = 0; c < clusters.length; c++) {
+            final cluster = clusters[c];
+            final dx = current.screenPoint.x - cluster.screenPoint.x;
+            final dy = current.screenPoint.y - cluster.screenPoint.y;
+            final dist = sqrt(dx * dx + dy * dy);
+            
+            double maxHalfExtent = 0;
+            for (final c in cluster.claims) {
+              final extent = _pinHalfExtent(c.type);
+              if (extent > maxHalfExtent) maxHalfExtent = extent;
+            }
+            final threshold = maxHalfExtent + _pinHalfExtent(current.claim.type) + 8.0;
 
-          for (int j = i + 1; j < projectedItems.length; j++) {
-            if (clusteredIndices.contains(j)) continue;
+            // Dynamic threshold for adding to an existing cluster based on max pin size
+            if (dist < threshold) {
+              cluster.claims.add(current.claim);
+              // Moving average for the cluster center
+              final int newCount = cluster.claims.length;
+              final num newX = cluster.screenPoint.x + (current.screenPoint.x - cluster.screenPoint.x) / newCount;
+              final num newY = cluster.screenPoint.y + (current.screenPoint.y - cluster.screenPoint.y) / newCount;
+              clusters[c] = MainScreenClusterItem(claims: cluster.claims, screenPoint: Point(newX, newY));
+              merged = true;
+              break;
+            }
+          }
+          if (merged) continue;
 
-            final candidate = projectedItems[j];
+          // 2. Check against existing individual pins
+          for (int i = 0; i < individualPins.length; i++) {
+            final candidate = individualPins[i];
             final dx = current.screenPoint.x - candidate.screenPoint.x;
             final dy = current.screenPoint.y - candidate.screenPoint.y;
             final dist = sqrt(dx * dx + dy * dy);
 
             // Dynamic threshold: sum of each pin's half-extent + 8px gutter
-            final threshold =
-                _pinHalfExtent(current.claim.type) +
+            final threshold = _pinHalfExtent(current.claim.type) +
                 _pinHalfExtent(candidate.claim.type) +
                 8.0;
 
             if (dist < threshold) {
-              group.add(candidate.claim);
-              totalX += candidate.screenPoint.x;
-              totalY += candidate.screenPoint.y;
-              clusteredIndices.add(j);
+              // Convert these two into a new cluster
+              clusters.add(
+                MainScreenClusterItem(
+                  claims: [candidate.claim, current.claim],
+                  screenPoint: Point(
+                    (current.screenPoint.x + candidate.screenPoint.x) / 2,
+                    (current.screenPoint.y + candidate.screenPoint.y) / 2,
+                  ),
+                ),
+              );
+              individualPins.removeAt(i);
+              merged = true;
+              break;
             }
           }
 
-          if (group.length > 1) {
-            clusteredIndices.add(i);
-            clusters.add(
-              MainScreenClusterItem(
-                claims: group,
-                screenPoint: Point(totalX / group.length, totalY / group.length),
-              ),
-            );
-          } else {
+          if (!merged) {
             individualPins.add(current);
           }
         }
@@ -408,7 +432,7 @@ class _MainScreenState extends State<MainScreen> {
                           behavior: SnackBarBehavior.floating,
                         ),
                       );
-                      final count = await DebugClaimSeeder.seedSyntheticClaims();
+                      final count = await DebugClaimSeeder.seedSyntheticClaims(count: 1000);
                       if (context.mounted) {
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(
@@ -470,8 +494,8 @@ class _MainScreenState extends State<MainScreen> {
               ? MapLibreMap(
                   styleString: _mapManager.buildLocalStyleJson(),
                   initialCameraPosition: const CameraPosition(
-                    // Bengaluru area — matches bundled placeholder .mbtiles
-                    target: LatLng(12.9716, 77.5946),
+                    // Wayanad area — matches bundled wayanad.mbtiles
+                    target: LatLng(11.75, 76.075),
                     zoom: 12.0,
                   ),
                   trackCameraPosition: true,
