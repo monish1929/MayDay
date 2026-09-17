@@ -169,10 +169,9 @@ class _ClaimPinWidgetState extends State<ClaimPinWidget>
                 child: GestureDetector(
                   behavior: HitTestBehavior.opaque,
                   onTap: widget.onTap,
-                  child: SizedBox(
+                  child: ConstrainedBox(
                     // Minimum 48dp tap target — PERSON_C.md Wk4 D4.
-                    width: 48,
-                    height: 48,
+                    constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
                     child: Center(
                       child: Stack(
                         alignment: Alignment.center,
@@ -215,10 +214,9 @@ class _ClaimPinWidgetState extends State<ClaimPinWidget>
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTap: widget.onTap,
-            child: SizedBox(
+            child: ConstrainedBox(
               // Minimum 48dp tap target — PERSON_C.md Wk4 D4.
-              width: 48,
-              height: 48,
+              constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
               child: Center(child: pinBody),
             ),
           ),
