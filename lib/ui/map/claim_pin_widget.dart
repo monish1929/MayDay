@@ -32,7 +32,7 @@ class ClaimPinWidget extends StatefulWidget {
 }
 
 class _ClaimPinWidgetState extends State<ClaimPinWidget>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   late AnimationController _pulseController;
   late Animation<double> _pulseAnimation;
 
@@ -53,7 +53,6 @@ class _ClaimPinWidgetState extends State<ClaimPinWidget>
     _ => const Duration(milliseconds: 1500),
   };
 
-  /// Halo expansion range scales with aging tier.
   double get _pulseEnd => switch (_agingTier) {
     1 => 1.15,  // subtle
     2 => 1.25,  // moderate
@@ -80,6 +79,7 @@ class _ClaimPinWidgetState extends State<ClaimPinWidget>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _pulseController = AnimationController(
       vsync: this,
       duration: _pulseDuration,
@@ -110,7 +110,21 @@ class _ClaimPinWidgetState extends State<ClaimPinWidget>
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused) {
+      if (_pulseController.isAnimating) {
+        _pulseController.stop();
+      }
+    } else if (state == AppLifecycleState.resumed) {
+      if (_isAgingSos && !_pulseController.isAnimating) {
+        _pulseController.repeat(reverse: true);
+      }
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _pulseController.dispose();
     super.dispose();
   }
@@ -261,6 +275,21 @@ class _ClaimPinWidgetState extends State<ClaimPinWidget>
               ),
             ),
 
+          // Unconfirmed badge
+          if (claim.claimTrust == ClaimTrust.unconfirmed)
+            Positioned(
+              bottom: -4,
+              left: -4,
+              child: Container(
+                padding: const EdgeInsets.all(1),
+                decoration: const BoxDecoration(
+                  color: AppColors.surfaceWhite,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.help_outline, size: 12, color: AppColors.secondaryText),
+              ),
+            ),
+
           // Ground confirmed check badge
           if (isGroundConfirmed)
             Positioned(
@@ -400,6 +429,21 @@ class _ClaimPinWidgetState extends State<ClaimPinWidget>
             ),
           ),
 
+          // Unconfirmed badge
+          if (claim.claimTrust == ClaimTrust.unconfirmed)
+            Positioned(
+              bottom: -4,
+              left: -4,
+              child: Container(
+                padding: const EdgeInsets.all(1),
+                decoration: const BoxDecoration(
+                  color: AppColors.surfaceWhite,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.help_outline, size: 12, color: AppColors.secondaryText),
+              ),
+            ),
+
           // Ground confirmed check badge
           if (isGroundConfirmed)
             Positioned(
@@ -477,6 +521,21 @@ class _ClaimPinWidgetState extends State<ClaimPinWidget>
               ],
             ),
           ),
+
+          // Unconfirmed badge
+          if (claim.claimTrust == ClaimTrust.unconfirmed)
+            Positioned(
+              bottom: -4,
+              left: -4,
+              child: Container(
+                padding: const EdgeInsets.all(1),
+                decoration: const BoxDecoration(
+                  color: AppColors.surfaceWhite,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.help_outline, size: 12, color: AppColors.secondaryText),
+              ),
+            ),
 
           // Ground confirmed check badge
           if (isGroundConfirmed)
