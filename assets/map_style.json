@@ -1,0 +1,31 @@
+{
+  "version": 8,
+  "name": "MayDay Offline",
+  "sources": {
+    "offline-tiles": {
+      "type": "raster",
+      "tiles": [
+        "http://127.0.0.1:{port}/{z}/{x}/{y}.png"
+      ],
+      "tileSize": 256,
+      "minzoom": 8,
+      "maxzoom": 14
+    }
+  },
+  "layers": [
+    {
+      "id": "background",
+      "type": "background",
+      "paint": {
+        "background-color": "#F4F0E8"
+      }
+    },
+    {
+      "id": "offline-raster",
+      "type": "raster",
+      "source": "offline-tiles",
+      "minzoom": 8,
+      "maxzoom": 14
+    }
+  ]
+}

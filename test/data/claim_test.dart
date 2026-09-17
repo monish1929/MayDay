@@ -1,3 +1,4 @@
+import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:cbor/cbor.dart';
 import 'package:mayday/data/models/claim.dart';
@@ -12,7 +13,8 @@ void main() {
       id: 'test-id',
       type: ClaimType.sos,
       originDeviceId: 'dev-1',
-      originSignature: 'dummy-sig',
+      originSequence: 1,
+      originSignature: Uint8List(64),
       logicalClock: LogicalClock(deviceId: 'dev-1', counter: 1),
       claimTrust: ClaimTrust.unconfirmed,
       dispatchPriority: DispatchPriority.low,
@@ -23,12 +25,16 @@ void main() {
     );
 
     final cbor = claim.toSignedCoreCbor() as CborList;
-    expect(cbor.length, 6);
+    expect(cbor.length, 7);
     expect((cbor[0] as CborString).toString(), 'test-id');
     expect((cbor[1] as CborSmallInt).value, ClaimType.sos.index);
     expect((cbor[2] as CborString).toString(), 'dev-1');
-    
-    final clockCbor = cbor[3] as CborList;
+    // originSequence — needed so a receiver can check that `id` really is
+    // hash(originDeviceId, originSequence) rather than lifted from someone
+    // else's id space (§2).
+    expect((cbor[3] as CborSmallInt).value, 1);
+
+    final clockCbor = cbor[4] as CborList;
     expect((clockCbor[0] as CborString).toString(), 'dev-1');
     expect((clockCbor[1] as CborSmallInt).value, 1);
   });

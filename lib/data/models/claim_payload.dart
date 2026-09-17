@@ -9,7 +9,14 @@ sealed class ClaimPayload {
   const ClaimPayload();
 
   CborValue toCbor();
-  
+
+  /// Every claim type is location-tagged, so this is declared on the base
+  /// rather than rediscovered by `is` checks at each call site. Adding a
+  /// fifth payload type is then a compile error here, instead of silently
+  /// falling through to a (0, 0) default somewhere downstream.
+  GeoPoint get location;
+
+
   static ClaimPayload fromCbor(ClaimType type, CborMap map) {
     switch (type) {
       case ClaimType.sos:
@@ -50,8 +57,11 @@ const _kConfirmationCount = CborSmallInt(5);
 const _kCategory = CborSmallInt(6);
 const _kPledgedCount = CborSmallInt(7);
 const _kClaimedReports = CborSmallInt(8);
+const _kProxyNote = CborSmallInt(9);
+const _kNote = CborSmallInt(10);
 
 class SosPayload extends ClaimPayload {
+  @override
   final GeoPoint location;
   final HeadcountBucket? headcount;
 
@@ -86,14 +96,17 @@ class SosPayload extends ClaimPayload {
 }
 
 class SosProxyPayload extends ClaimPayload {
+  @override
   final GeoPoint location;
   final HeadcountBucket? headcount;
   final String reporterDeviceId;
+  final String? proxyNote;
 
   const SosProxyPayload({
     required this.location,
     this.headcount,
     required this.reporterDeviceId,
+    this.proxyNote,
   });
 
   @override
@@ -103,6 +116,7 @@ class SosProxyPayload extends ClaimPayload {
       _kLon: ClaimPayload.encodeFloat32(location.lon),
       _kReporterDeviceId: CborString(reporterDeviceId),
       if (headcount != null) _kHeadcount: CborSmallInt(headcount!.index),
+      if (proxyNote != null) _kProxyNote: CborString(proxyNote!),
     });
   }
 
@@ -115,24 +129,33 @@ class SosProxyPayload extends ClaimPayload {
     if (map.containsKey(_kHeadcount)) {
       hc = HeadcountBucket.values[(map[_kHeadcount] as CborSmallInt).value];
     }
+    
+    String? proxyNote;
+    if (map.containsKey(_kProxyNote)) {
+      proxyNote = (map[_kProxyNote] as CborString).toString();
+    }
 
     return SosProxyPayload(
       location: GeoPoint(lat: lat, lon: lon),
       headcount: hc,
       reporterDeviceId: reporterDeviceId,
+      proxyNote: proxyNote,
     );
   }
 }
 
 class HazardReportPayload extends ClaimPayload {
+  @override
   final GeoPoint location;
   final HazardType hazardType;
   final int confirmationCount;
+  final String? note;
 
   const HazardReportPayload({
     required this.location,
     required this.hazardType,
     required this.confirmationCount,
+    this.note,
   });
 
   @override
@@ -142,6 +165,7 @@ class HazardReportPayload extends ClaimPayload {
       _kLon: ClaimPayload.encodeFloat32(location.lon),
       _kHazardType: CborSmallInt(hazardType.index),
       _kConfirmationCount: CborSmallInt(confirmationCount),
+      if (note != null) _kNote: CborString(note!),
     });
   }
 
@@ -153,15 +177,22 @@ class HazardReportPayload extends ClaimPayload {
     final CborValue countVal = map[_kConfirmationCount]!;
     int count = countVal is CborSmallInt ? countVal.value : (countVal as CborInt).toInt();
 
+    String? note;
+    if (map.containsKey(_kNote)) {
+      note = (map[_kNote] as CborString).toString();
+    }
+
     return HazardReportPayload(
       location: GeoPoint(lat: lat, lon: lon),
       hazardType: HazardType.values[typeIdx],
       confirmationCount: count,
+      note: note,
     );
   }
 }
 
 class ResourcePayload extends ClaimPayload {
+  @override
   final GeoPoint location;
   final ResourceCategory category;
   final int pledgedCount;

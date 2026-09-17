@@ -43,55 +43,71 @@ Why this matters more than usual: the invariants in `CLAUDE.md` §2 exist becaus
 I don't wait on anyone. I fake the shape of a Claim and build against it; B's real store arrives week 2.
 
 ### Day 1 — Shell and navigation
-- [ ] Flutter project structure per `CLAUDE.md` §5.1
-- [ ] Entry screen: **User** / **Volunteer**
-- [ ] Navigation scaffold, route definitions
-- [ ] A `MockClaim` class matching `CLAIM_SCHEMA.md` §1 **field-for-field** — same names, same enums
+- [✓] Flutter project structure per `CLAUDE.md` §5.1
+- [✓] Entry screen: **User** / **Volunteer**
+- [✓] Navigation scaffold, route definitions
+- [✓] A `MockClaim` class matching `CLAIM_SCHEMA.md` §1 **field-for-field** — same names, same enums
 
 **Use the real field names from day one.** If I invent `urgency` where the schema says `dispatchPriority`, next week's swap becomes a rename job instead of a plug-in.
 
 ### Day 2 — The map
-- [ ] MapLibre GL integrated
-- [ ] One small `.mbtiles` bundled as a placeholder
-- [ ] Map renders fully offline — **test with the device in airplane mode**
-- [ ] Pan, zoom, sensible initial position
+- [✓] MapLibre GL integrated
+- [✓] One small `.mbtiles` bundled as a placeholder
+- [✓] Map renders fully offline — **test with the device in airplane mode**
+- [✓] Pan, zoom, sensible initial position
 
 **Airplane mode is the real test.** It's easy to ship a map that quietly fetches tiles from the network in dev and fails silently in the field.
 
+#### Day 2 notes — tile serving architecture
+
+- MapLibre GL (`maplibre_gl ^0.26.2`) can't read tiles directly from a `.mbtiles` SQLite file via `file://` — it expects a real directory of `{z}/{x}/{y}.png` files or a URL. Implemented a lightweight local `HttpServer` (bound strictly to `127.0.0.1`, dynamic port, never `0.0.0.0` — `CLAUDE.md` §1) in `offline_map_manager.dart` that queries the `.mbtiles` database directly per tile request and serves the PNG bytes over `http://127.0.0.1:<port>/{z}/{x}/{y}.png`. MBTiles uses TMS tiling (y-axis inverted from XYZ) — conversion is `tmsY = (2^z - 1 - y)`.
+- Added `sqlite3` + `sqlite3_flutter_libs` as dependencies — `sqlite3` alone throws a `dlopen` failure on Android without `sqlite3_flutter_libs`, which bundles the native `libsqlite3.so`.
+- Added a scoped Android `network_security_config.xml` permitting cleartext HTTP only for `127.0.0.1`/`localhost`, instead of the app-wide `usesCleartextTraffic` flag, to keep the "no network path" invariant (`CLAUDE.md` §1) as tight as possible.
+- Known gotcha: MapLibre Native's Android SDK checks `ConnectivityManager` before attempting ANY HTTP request, including to `127.0.0.1` — so real airplane mode silently blocks all tile requests (zero requests reach the local server, no error, map just stays visually static) unless `MapLibre.setConnected(true)` is called at startup. This required a native Kotlin change in `MainActivity.kt` (calling `MapLibre.getInstance(this)` and `MapLibre.setConnected(true)` in `onCreate`) plus adding `org.maplibre.gl:android-sdk-opengl:13.3.0` directly to `android/app/build.gradle.kts`. Without this override, the app *looks* like it's working offline in normal testing but silently fails to load any tile the moment real airplane mode is on — worth flagging to A given the mesh work will face similar connectivity-detection questions on Android.
+- Current placeholder `.mbtiles` (~1.1MB, Bengaluru area, zoom 8-14) is schema-valid with real tile data, but the tiles themselves are flat placeholder colors (cream land / blue-gray border), not real map imagery — swapping in a real district's tiles is still the open question tracked below.
+- Added a temporary debug overlay (tile load/fail counter, top-left of map) to `OfflineMapManager` + `MainScreen` for verifying tile serving without needing Logcat. Marked as removable — flag for cleanup before Day 3 sign-off if not needed further.
+
 ### Day 3 — Bottom sheet and forms
-- [ ] Three actions: **Rescue**, **Report**, **Contribute**
-- [ ] Rescue form: type selector (Individual / Group / **Proxy**), headcount bucket, optional proxy note (80 char cap)
-- [ ] Report form: hazard kind, optional note (80 char cap)
-- [ ] Contribute form: resource category (canonical four), pledged count
-- [ ] Forms print to console for now
+- [✓] Three actions: **Rescue**, **Report**, **Contribute**
+- [✓] Rescue form: type selector (Individual / Group / **Proxy**), headcount bucket, optional proxy note (80 char cap)
+- [✓] Report form: hazard kind, optional note (80 char cap)
+- [✓] Contribute form: resource category (canonical four), pledged count
+- [✓] Forms print to console for now
 
 The 80-char caps aren't stylistic — a claim must fit in one BLE write (~400 byte envelope), and free text is the biggest variable contributor.
 
 **Don't forget Proxy SOS.** It's the case where someone raises an alarm for a neighbour whose phone is dead. Our own research says rural families typically share one phone, so the person needing rescue often isn't the one holding a device. Easy to leave out because it wasn't in v1.
 
 ### Day 4 — Pins and layers
-- [ ] Layer toggle: **Emergency** (SOS + hazard) / **Resource**
-- [ ] Distinct icons: SOS, Proxy SOS, hazard, each resource category
-- [ ] Trust tier changes appearance — unconfirmed faint, corroborated full opacity, groundConfirmed distinct
-- [ ] Hazard pins show a confirmation count ("12 reports")
-- [ ] Resource pins show availability as a **range** when uncertain ("2–6 packets")
-- [ ] SOS pins cluster visually at low zoom ("3 SOS here") — **display only, records stay separate**
-- [ ] An aging unresolved SOS renders with **more** visual urgency, not less
+- [✓] Layer toggle: **Emergency** (SOS + hazard) / **Resource**
+- [✓] Distinct icons: SOS, Proxy SOS, hazard, each resource category
+- [✓] Trust tier changes appearance — unconfirmed faint, corroborated full opacity, groundConfirmed distinct
+- [✓] Hazard pins show a confirmation count ("12 reports")
+- [ ] Resource pins show availability as a **range** when uncertain ("2–6 packets") — **deferred**: requires B's replica-conflict data (CLAIM_SCHEMA.md §8.1), not available in Week 1 mock data. Showing single available count for now.
+- [✓] SOS pins cluster visually at low zoom ("3 SOS here") — **display only, records stay separate**
+- [✓] An aging unresolved SOS renders with **more** visual urgency, not less
 
 Two things easy to get backwards:
 - **Relative time only.** "About 2 hours ago" — never a precise timestamp. Devices can't sync clocks, so precision would be a fabrication.
 - **Aging SOS gets louder.** The instinct is to fade old pins. Here that's exactly wrong.
 
 ### Day 5 — Volunteer ops screen
-- [ ] Rescue queue sorted by `dispatchPriority` then trust
-- [ ] Report review list
-- [ ] Resource coordination view
-- [ ] QR scanner skeleton (camera permission, viewfinder — no verification logic yet)
-- [ ] All on mock data
+- [✓] Rescue queue sorted by `dispatchPriority` then trust
+- [✓] Report review list
+- [✓] Resource coordination view
+- [✓] QR scanner skeleton (camera permission, viewfinder — no verification logic yet)
+- [✓] All on mock data
 
 **Exit criteria:** a fully clickable app that looks like the real thing, running on mock data, ready to have B's store dropped in underneath.
 
 **Sync — what I bring:** any field I needed that isn't in the schema (better to catch a gap now than after B builds against it), and a rough `.mbtiles` size for one district, since it feeds the storage budget and the "tiles evicted before SOS records" rule.
+
+#### Week 1 sync findings
+
+- [ ] Any field I needed that isn't in `CLAIM_SCHEMA.md` — better to catch a gap now than after B has built against it
+  - §8 doesn't list `proxyNote` (SosProxyPayload) or `note` (HazardReportPayload), but §9.2 references both as capped free-text fields. Built against §9.2 as the more specific source. Needs §8 updated to match, per §12.
+  - §1's Claim pseudocode types `resolvedAtLogical`/`createdAtLogical`/`lastConfirmedAtLogical`/`archivedAtLogical` as `DateTime?` and `displayLifetime` as non-nullable `Duration`, but §4 and §10.1 require `LogicalClock`-typed and nullable respectively. Built to §4/§10.1. Worth confirming with B before they build the real Claim class.
+- [ ] Rough `.mbtiles` size for one district, since it feeds the storage budget in `CLAIM_SCHEMA.md` §10.2 and the "map tiles get evicted before SOS records" rule
 
 ---
 
@@ -316,9 +332,12 @@ Beyond the standard checks in `CLAUDE.md` §4.5:
 
 | Date | Week/Day | Branch | What landed | Blocked on / notes |
 |---|---|---|---|---|
-| | | | | |
-| | | | | |
-| | | | | |
+| 2026-08-18 | Wk1 D1 | c/app-shell | Day 1 complete — entry screen, nav scaffold, routing, MockClaim + supporting models matching CLAIM_SCHEMA.md §1 | Two schema gaps found, see open questions below |
+| 2026-08-19 | Wk1 D2 | c/app-shell | Day 2 complete — MapLibre GL integrated via a localhost-only HTTP tile server reading directly from the bundled SQLite .mbtiles (no file:// or remote tile paths); verified working in real airplane mode on-device. | See Day 2 notes above for architecture decisions and gotchas future work should know about. |
+| 2026-08-20 | Wk1 D3 | c/app-shell | Day 3 complete — Rescue (Individual/Group/Proxy incl. headcount + 80-char proxy note), Report (hazard kind + 80-char note), Contribute (canonical 4 categories + pledged count) bottom sheet forms built in lib/ui/forms/, wired to main_screen.dart buttons, all submits construct correct payload classes and print to console. Verified via logcat against CLAIM_SCHEMA.md §8 — all enum values, payload field names, and null handling (Individual has no headcount, Proxy headcount/note optional) confirmed correct on-device. | None — ready for Day 4 (pins and layers). |
+| 2026-08-20 | Wk1 D4 | c/app-shell | Day 4 complete — Emergency/Resource layer toggle, distinct pin rendering per type/trust/priority, confirmation counts on hazard pins, display-only clustering at low zoom (< 11.5), time-driven aging SOS urgency escalation (pulsing halo & speed scaled across 1hr/3hr/6hr+ tiers). Resource range display deferred to Week 2. | Ready for Day 5 (Volunteer ops screen). |
+| 2026-08-20 | Wk1 D4 | c/app-shell | Day 4 on-device verification complete. Found and fixed two bugs post-implementation: (1) pin projection ran on onMapCreated before MapLibre's style/camera was ready, silently dropping all pins on first launch — fixed by moving initial projection to onStyleLoadedCallback plus a bounded single retry, with the previously-silent toScreenLocation failures now logged; (2) toScreenLocation() returns physical device pixels but Positioned expects logical pixels, placing every pin off-screen — fixed by dividing by MediaQuery.devicePixelRatio in _buildPinOverlayWidgets(). Confirmed on-device: all three trust tiers render correctly, aging escalates visibly across tier 1 (sos-002, ~2hr) and tier 3 (sos-003, ~6.5hr), clustering separates into individual pins at high zoom and groups at low zoom with detail sheet showing each claim separately, both Emergency and Resource layers toggle correctly, resource pins show single available count with no fabricated range. | None — Day 4 fully closed. Ready for Day 5. |
+| 2026-08-20 | Wk1 D5 | c/app-shell | Day 5 complete — volunteer_ops_screen.dart built with three tabs: rescue queue (sorted by dispatchPriority then claimTrust, older-claim tiebreaker), report review (sorted by confirmationCount descending), resource coordination (category filter across canonical four, showing payload.available with pledged/claimed breakdown, no fabricated range). qr_scanner_screen.dart added as a viewfinder + permission-handling skeleton only, no decode/verification logic, per CLAIM_SCHEMA.md §6.2 Phase 3 scope. Refactored shared relative-time and aging-tier logic (previously duplicated across claim_pin_widget.dart and claim_detail_sheet.dart) into lib/ui/models/claim_display_helpers.dart, now consumed by all three call sites including the new rescue queue. router.dart was touched to register the /qr-scanner route — minimal necessary addition, flagged here since it wasn't in original scope. Verified on-device: rescue queue sort order, report sort order, and resource category filtering all match mock data exactly; all list rows correctly open ClaimDetailSheet. | One open visual bug found during testing — see open questions below. |
 
 ### Open questions I'm carrying
 
@@ -326,24 +345,28 @@ Beyond the standard checks in `CLAUDE.md` §4.5:
 - [ ] Icon set for low-literacy users — field validation is a known open question, not mine alone to settle
 - [ ] How to visually distinguish Proxy SOS from self-raised at a glance — Wk3 D5
 - [ ] Rendering "2–6 packets" uncertainty without it reading as a bug — Wk3 D3
+- [ ] Resource availability range ('2–6 packets') needs real replica-conflict data from B's store (CLAIM_SCHEMA.md §8.1) — not implementable against Week 1 mock data. Deferred to Week 2.
 - [ ] Screen-off behaviour with an active SOS — Wk4 D5, needs A's input
 - [ ] Multi-language: MVP scope or backlog? — team call
+- [ ] §8 doesn't list `proxyNote` (SosProxyPayload) or `note` (HazardReportPayload), but §9.2 references both as capped free-text fields. Built against §9.2 as the more specific source. Needs §8 updated to match, per §12.
+- [ ] §1's Claim pseudocode types `resolvedAtLogical`/`createdAtLogical`/`lastConfirmedAtLogical`/`archivedAtLogical` as `DateTime?` and `displayLifetime` as non-nullable `Duration`, but §4 and §10.1 require `LogicalClock`-typed and nullable respectively. Built to §4/§10.1. Worth confirming with B before they build the real Claim class.
+- [ ] Aging rescue queue cards (sos-003, sos-001) show a stray diagonal yellow/black hazard-stripe element with rotated, clipped text on the right edge of the card, not present on non-aging cards like sos-002. Not part of the original Day 5 spec — likely a leftover or misconfigured decorative widget. Needs a code look in volunteer_ops_screen.dart's rescue card builder before this is considered fully clean.
 
 ### Screens status
 
 | Screen | Mock | Real data | Polished | Notes |
 |---|---|---|---|---|
-| Entry | ☐ | ☐ | ☐ | |
-| Map + layers | ☐ | ☐ | ☐ | |
-| Bottom sheet | ☐ | ☐ | ☐ | |
-| Rescue form | ☐ | ☐ | ☐ | incl. Proxy |
-| Report form | ☐ | ☐ | ☐ | |
-| Contribute form | ☐ | ☐ | ☐ | |
+| Entry | ✓ | ☐ | ☐ | |
+| Map + layers | ✓ | ☐ | ☐ | Pin projection timing + coordinate space bugs found and fixed post-implementation — see progress log. |
+| Bottom sheet | ✓ | ☐ | ☐ | |
+| Rescue form | ✓ | ☐ | ☐ | incl. Proxy |
+| Report form | ✓ | ☐ | ☐ | |
+| Contribute form | ✓ | ☐ | ☐ | |
 | SOS detail sheet | ☐ | ☐ | ☐ | |
 | Hazard detail sheet | ☐ | ☐ | ☐ | |
 | Resource detail sheet | ☐ | ☐ | ☐ | |
-| Volunteer queue | ☐ | ☐ | ☐ | |
+| Volunteer queue | ✓ | ☐ | ☐ | incl. rescue/report/resource tabs |
 | QR display (requester) | ☐ | ☐ | ☐ | fresh nonce each show |
-| QR scanner (volunteer) | ☐ | ☐ | ☐ | |
+| QR scanner (volunteer) | ✓ | ☐ | ☐ | skeleton only — logic in Phase 3 |
 | Volunteer identity | ☐ | ☐ | ☐ | |
 | Vouching | ☐ | ☐ | ☐ | |

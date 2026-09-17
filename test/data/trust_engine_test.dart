@@ -1,5 +1,6 @@
 // test/data/trust_engine_test.dart
 
+import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mayday/data/trust_engine.dart';
 import 'package:mayday/data/models/claim.dart';
@@ -18,7 +19,8 @@ void main() {
         id: 'test_claim',
         type: ClaimType.hazardReport,
         originDeviceId: 'device1',
-        originSignature: 'sig',
+        originSequence: 1,
+        originSignature: Uint8List(64),
         logicalClock: LogicalClock(deviceId: 'device1', counter: 1),
         claimTrust: ClaimTrust.unconfirmed,
         dispatchPriority: DispatchPriority.low,
