@@ -61,6 +61,10 @@ class _MainScreenState extends State<MainScreen> {
   /// Toggle built in Day 4 — PERSON_C.md §3 Day 4.
   bool _showEmergencyLayer = true;
 
+  /// Category sub-filter for the resource layer — Week 3 Day 4.
+  /// null = show all categories.
+  ResourceCategory? _selectedResourceCategory;
+
   /// Offline map tile manager — copies bundled .mbtiles from assets to
   /// the device’s writable directory so MapLibre can read them.
   /// No remote URLs, no network calls. — PERSON_C.md §3 Day 2.
@@ -184,13 +188,17 @@ class _MainScreenState extends State<MainScreen> {
       _currentZoom = zoom;
 
       // Filter claims by active layer — PERSON_C.md §3 Day 4
+      // Resource layer also applies category sub-filter — Week 3 Day 4.
       final filteredClaims = _allClaims.where((c) {
         if (_showEmergencyLayer) {
           return c.type == ClaimType.sos ||
               c.type == ClaimType.sosProxy ||
               c.type == ClaimType.hazardReport;
         } else {
-          return c.type == ClaimType.resource;
+          if (c.type != ClaimType.resource) return false;
+          if (_selectedResourceCategory == null) return true;
+          return c.payload is ResourcePayload &&
+              (c.payload as ResourcePayload).category == _selectedResourceCategory;
         }
       }).toList();
       debugPrint('[MainScreen] filteredClaims count: ${filteredClaims.length}');
@@ -520,6 +528,26 @@ class _MainScreenState extends State<MainScreen> {
           // Rendered on top of the MapLibre surface in Flutter widget tree
           if (_mapReady) ..._buildPinOverlayWidgets(),
 
+          // ─── Resource Category Filter Chips (Week 3 Day 4) ─────────
+          // Only visible when resource layer is active.
+          if (_mapReady && !_showEmergencyLayer)
+            Positioned(
+              top: 8,
+              left: 12,
+              right: 12,
+              child: _buildResourceCategoryChips(),
+            ),
+
+          // ─── Resource Empty State (Week 3 Day 4) ───────────────────
+          // Shown when resource layer is active and nothing to render.
+          if (_mapReady &&
+              !_showEmergencyLayer &&
+              _renderedPins.isEmpty &&
+              _renderedClusters.isEmpty)
+            Positioned.fill(
+              child: _buildResourceEmptyState(),
+            ),
+
           // ─── Map Picking Banner ───────────────────────────────────
           if (_pickingLocationFor != FormType.none)
             Positioned(
@@ -650,7 +678,10 @@ class _MainScreenState extends State<MainScreen> {
             selectedTextColor: Colors.white,
             onTap: () {
               if (!_showEmergencyLayer) {
-                setState(() => _showEmergencyLayer = true);
+                setState(() {
+                  _showEmergencyLayer = true;
+                  _selectedResourceCategory = null;
+                });
                 _updatePinScreenPositions();
               }
             },
@@ -705,6 +736,173 @@ class _MainScreenState extends State<MainScreen> {
                 fontSize: 11,
                 fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
                 color: isSelected ? selectedTextColor : Colors.white70,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ─── Resource Category Filter (Week 3 Day 4) ──────────────────────
+  /// Horizontal chip strip for filtering resource pins by category.
+  /// Positioned on the map when the resource layer is active.
+  /// Visual pattern matches volunteer_ops_screen.dart's category chips.
+  Widget _buildResourceCategoryChips() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceWhite.withAlpha(240),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.borderSubtle),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withAlpha(20),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _resourceCategoryChip('All', null),
+            const SizedBox(width: 6),
+            _resourceCategoryChip(
+              'Food & Water',
+              ResourceCategory.foodWater,
+              icon: Icons.restaurant,
+            ),
+            const SizedBox(width: 6),
+            _resourceCategoryChip(
+              'Shelter',
+              ResourceCategory.shelter,
+              icon: Icons.home_outlined,
+            ),
+            const SizedBox(width: 6),
+            _resourceCategoryChip(
+              'Medical',
+              ResourceCategory.medical,
+              icon: Icons.medical_services_outlined,
+            ),
+            const SizedBox(width: 6),
+            _resourceCategoryChip(
+              'Equipment',
+              ResourceCategory.equipment,
+              icon: Icons.build_outlined,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _resourceCategoryChip(
+    String label,
+    ResourceCategory? category, {
+    IconData? icon,
+  }) {
+    final isSelected = _selectedResourceCategory == category;
+    return GestureDetector(
+      onTap: () {
+        setState(() {
+          _selectedResourceCategory = category;
+        });
+        _updatePinScreenPositions();
+      },
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: isSelected ? AppColors.darkGreen : AppColors.creamBackground,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: isSelected ? AppColors.darkGreen : AppColors.borderSubtle,
+            width: 1.5,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (icon != null) ...[
+              Icon(
+                icon,
+                size: 13,
+                color: isSelected ? Colors.white : AppColors.darkGreen,
+              ),
+              const SizedBox(width: 4),
+            ],
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                color: isSelected ? Colors.white : AppColors.darkGreen,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ─── Resource Empty State (Week 3 Day 4) ──────────────────────────
+  /// Shown when the resource layer is active but there are zero pins/clusters
+  /// to render. Matches the visual pattern of volunteer_ops_screen.dart's
+  /// _buildEmptyState(). No connectivity implications — purely "nothing here yet."
+  Widget _buildResourceEmptyState() {
+    final subtitle = _selectedResourceCategory != null
+        ? 'No ${ClaimDisplayHelpers.labelForResourceCategory(_selectedResourceCategory!).toLowerCase()} supply points nearby yet.'
+        : 'No resource supply points nearby yet.';
+
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32.0),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(18),
+              decoration: BoxDecoration(
+                color: AppColors.surfaceWhite,
+                shape: BoxShape.circle,
+                border: Border.all(color: AppColors.borderSubtle, width: 1.5),
+              ),
+              child: Icon(
+                Icons.inventory_2_outlined,
+                size: 42,
+                color: AppColors.secondaryText.withAlpha(140),
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'No Resources Found',
+              style: TextStyle(
+                color: AppColors.primaryText,
+                fontSize: 16,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              subtitle,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: AppColors.secondaryText,
+                fontSize: 13,
+                height: 1.4,
+              ),
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              'Tap Contribute to pledge supplies.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: AppColors.darkGreen,
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
               ),
             ),
           ],
