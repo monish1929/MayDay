@@ -110,7 +110,7 @@ flutter:
   uses-material-design: true
 
   assets:
-    - assets/tiles/placeholder.mbtiles
+    - assets/tiles/wayanad.mbtiles
     - assets/map_style.json
 
   # To add assets to your application, add an assets section, like this:
