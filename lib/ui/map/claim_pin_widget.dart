@@ -427,14 +427,15 @@ class _ClaimPinWidgetState extends State<ClaimPinWidget>
     // Range display ('2–6 packets') is blocked on B's replica-conflict
     // data (CLAIM_SCHEMA.md §8.1) — not available in Week 1 mock data.
     // Showing single available count until real uncertainty data exists.
-    final availableText = '${payload.available}';
+    final isOut = payload.available == 0;
+    final availableText = isOut ? 'OUT' : '${payload.available}';
 
     return Container(
       decoration: BoxDecoration(
         color: AppColors.surfaceWhite,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: isGroundConfirmed ? AppColors.deepNavy : AppColors.darkGreen,
+          color: isGroundConfirmed ? AppColors.deepNavy : (isOut ? AppColors.secondaryText : AppColors.darkGreen),
           width: isGroundConfirmed ? 2.5 : 1.8,
         ),
         boxShadow: [
@@ -453,7 +454,7 @@ class _ClaimPinWidgetState extends State<ClaimPinWidget>
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
             decoration: BoxDecoration(
-              color: AppColors.greenLight,
+              color: isOut ? AppColors.grayLight : AppColors.greenLight,
               borderRadius: BorderRadius.circular(8),
             ),
             child: Row(
@@ -461,14 +462,14 @@ class _ClaimPinWidgetState extends State<ClaimPinWidget>
               children: [
                 Icon(
                   _resourceIcon(payload.category),
-                  color: AppColors.darkGreen,
+                  color: isOut ? AppColors.secondaryText : AppColors.darkGreen,
                   size: 16,
                 ),
                 const SizedBox(width: 4),
                 Text(
                   availableText,
-                  style: const TextStyle(
-                    color: AppColors.darkGreen,
+                  style: TextStyle(
+                    color: isOut ? AppColors.secondaryText : AppColors.darkGreen,
                     fontSize: 10,
                     fontWeight: FontWeight.w800,
                   ),

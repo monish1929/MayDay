@@ -309,7 +309,7 @@ class _ClaimDetailSheetState extends State<ClaimDetailSheet> {
           else if (claim.payload is HazardReportPayload)
             _buildHazardDetails(claim.payload as HazardReportPayload)
           else if (claim.payload is ResourcePayload)
-            _buildResourceDetails(claim.payload as ResourcePayload),
+            _buildResourceDetails(claim.payload as ResourcePayload, claim),
         ],
       ),
     );
@@ -452,24 +452,57 @@ class _ClaimDetailSheetState extends State<ClaimDetailSheet> {
     );
   }
 
-  Widget _buildResourceDetails(ResourcePayload payload) {
+  Widget _buildResourceDetails(ResourcePayload payload, Claim claim) {
     // Range display ('2–6 packets') is blocked on B's replica-conflict
     // data (CLAIM_SCHEMA.md §8.1) — not available in Week 1 mock data.
     // Showing single available count until real uncertainty data exists.
     final hasLowReports = _localRunningLowReports > 0;
+    
+    final isOut = payload.available == 0;
+    
+    final isGroundConfirmed = claim.claimTrust == ClaimTrust.groundConfirmed;
+    final trustConfig = ClaimDisplayHelpers.trustConfig(ClaimTrust.groundConfirmed);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        if (isGroundConfirmed) ...[
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            margin: const EdgeInsets.only(bottom: 12),
+            decoration: BoxDecoration(
+              color: trustConfig.bg,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: trustConfig.border, width: 1.5),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.verified, size: 18, color: trustConfig.fg),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Confirmed on-site by a volunteer',
+                    style: TextStyle(
+                      color: trustConfig.fg,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+
         // ─── Authoritative Pledged Count (primary, confident figure) ───
         Row(
           children: [
-            const Icon(Icons.inventory_2_outlined, size: 15, color: AppColors.darkGreen),
+            Icon(Icons.inventory_2_outlined, size: 15, color: isOut ? AppColors.secondaryText : AppColors.darkGreen),
             const SizedBox(width: 6),
             Text(
               payload.category.name.toUpperCase(),
-              style: const TextStyle(
-                color: AppColors.darkGreen,
+              style: TextStyle(
+                color: isOut ? AppColors.secondaryText : AppColors.darkGreen,
                 fontSize: 13,
                 fontWeight: FontWeight.w800,
               ),
@@ -481,29 +514,43 @@ class _ClaimDetailSheetState extends State<ClaimDetailSheet> {
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
           decoration: BoxDecoration(
-            color: AppColors.greenLight,
+            color: isOut ? AppColors.grayLight : AppColors.greenLight,
             borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: AppColors.darkGreen.withAlpha(60)),
+            border: Border.all(color: isOut ? AppColors.borderSubtle : AppColors.darkGreen.withAlpha(60)),
           ),
           child: Row(
             children: [
               Text(
                 '${payload.pledgedCount}',
-                style: const TextStyle(
-                  color: AppColors.darkGreen,
+                style: TextStyle(
+                  color: isOut ? AppColors.secondaryText : AppColors.darkGreen,
                   fontSize: 22,
                   fontWeight: FontWeight.w900,
                 ),
               ),
               const SizedBox(width: 8),
-              const Expanded(
-                child: Text(
-                  'units pledged (authoritative)',
-                  style: TextStyle(
-                    color: AppColors.darkGreen,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                  ),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'units pledged (authoritative)',
+                      style: TextStyle(
+                        color: isOut ? AppColors.secondaryText : AppColors.darkGreen,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    if (isOut)
+                      Text(
+                        'Out — was here, now empty',
+                        style: TextStyle(
+                          color: AppColors.secondaryText,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                  ],
                 ),
               ),
             ],
@@ -511,7 +558,7 @@ class _ClaimDetailSheetState extends State<ClaimDetailSheet> {
         ),
 
         // ─── Soft "Running Low" Indicator (only if reports exist) ──────
-        if (hasLowReports) ...[
+        if (hasLowReports && !isOut) ...[
           const SizedBox(height: 8),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
