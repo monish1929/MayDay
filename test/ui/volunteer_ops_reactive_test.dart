@@ -6,7 +6,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:mayday/data/database/database_helper.dart';
 import 'package:mayday/data/database/claim_repository.dart';
-import 'package:mayday/data/claim_factory.dart';
+import '../support/signed_claim.dart';
 import 'package:mayday/data/models/claim.dart';
 import 'package:mayday/data/models/claim_payload.dart';
 import 'package:mayday/data/models/geo_point.dart';
@@ -183,21 +183,28 @@ void main() {
       final repo = ClaimRepository();
 
       await tester.runAsync(() async {
-        final sos1 = await ClaimFactory.createClaim(
+        final sos1 = await createSignedClaim(
           originDeviceId: 'dev-ops-1',
           payload: const SosPayload(location: GeoPoint(lat: 12.97, lon: 77.59)),
         );
         await repo.insertClaim(sos1);
       });
 
-      await tester.pumpWidget(
-        const MaterialApp(
-          home: VolunteerOpsScreen(),
-        ),
-      );
-
-      // Drain initial stream snapshot
+      // pumpWidget goes INSIDE runAsync, and that placement is the whole
+      // trick. `initState` subscribes to `watchActiveClaims()`, whose first
+      // emission waits on a real sqflite query. Work started in the fake-async
+      // zone a plain pumpWidget runs in never gets to finish, so the
+      // subscription would sit for ever on a future that cannot complete and
+      // the screen would render "Rescue (0)" no matter how many times it was
+      // pumped afterwards. That is a property of the test harness, not of the
+      // screen — on a device this path is fine.
       await tester.runAsync(() async {
+        await tester.pumpWidget(
+          const MaterialApp(
+            home: VolunteerOpsScreen(),
+          ),
+        );
+        // Let the initial snapshot land before leaving the real-async zone.
         await Future.delayed(const Duration(milliseconds: 100));
       });
       await tester.pump();
@@ -209,7 +216,7 @@ void main() {
 
       // Insert Hazard and Resource claims dynamically
       await tester.runAsync(() async {
-        final hazard = await ClaimFactory.createClaim(
+        final hazard = await createSignedClaim(
           originDeviceId: 'dev-ops-2',
           payload: const HazardReportPayload(
             location: GeoPoint(lat: 12.98, lon: 77.60),
@@ -217,7 +224,7 @@ void main() {
             confirmationCount: 3,
           ),
         );
-        final resource = await ClaimFactory.createClaim(
+        final resource = await createSignedClaim(
           originDeviceId: 'dev-ops-3',
           payload: const ResourcePayload(
             location: GeoPoint(lat: 12.99, lon: 77.61),

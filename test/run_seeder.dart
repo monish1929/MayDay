@@ -1,3 +1,14 @@
+// test/run_seeder.dart
+//
+// A manual script, not a test — run it with `dart run test/run_seeder.dart`
+// when you want a populated store to look at by hand. `flutter test` ignores
+// it, because the runner only collects `*_test.dart`.
+//
+// The assertions about seeding live in `seed_db_test.dart`. This exists for
+// the case that file cannot serve: seeing the data on a real device.
+//
+// ignore_for_file: avoid_print — stdout is this script's entire interface.
+
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:mayday/common/debug_claim_seeder.dart';
 import 'package:mayday/data/database/database_helper.dart';

@@ -7,7 +7,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:mayday/data/database/database_helper.dart';
 import 'package:mayday/data/database/claim_repository.dart';
-import 'package:mayday/data/claim_factory.dart';
+import '../support/signed_claim.dart';
 import 'package:mayday/data/models/claim.dart';
 import 'package:mayday/data/models/claim_payload.dart';
 import 'package:mayday/data/models/geo_point.dart';
@@ -46,7 +46,7 @@ void main() {
 
       // 2. Insert an SOS claim
       completer = Completer<void>();
-      final sos = await ClaimFactory.createClaim(
+      final sos = await createSignedClaim(
         originDeviceId: 'dev-stream-1',
         payload: const SosPayload(location: GeoPoint(lat: 12.9716, lon: 77.5946)),
       );
@@ -58,7 +58,7 @@ void main() {
 
       // 3. Insert a Hazard claim
       completer = Completer<void>();
-      final hazard = await ClaimFactory.createClaim(
+      final hazard = await createSignedClaim(
         originDeviceId: 'dev-stream-2',
         payload: const HazardReportPayload(
           location: GeoPoint(lat: 12.9800, lon: 77.6000),
@@ -88,11 +88,11 @@ void main() {
       final repo = ClaimRepository();
 
       // Insert 2 Emergency claims (1 SOS, 1 Hazard) and 1 Resource claim
-      final sos = await ClaimFactory.createClaim(
+      final sos = await createSignedClaim(
         originDeviceId: 'dev-layer-1',
         payload: const SosPayload(location: GeoPoint(lat: 12.9716, lon: 77.5946)),
       );
-      final hazard = await ClaimFactory.createClaim(
+      final hazard = await createSignedClaim(
         originDeviceId: 'dev-layer-2',
         payload: const HazardReportPayload(
           location: GeoPoint(lat: 12.9816, lon: 77.5946),
@@ -100,7 +100,7 @@ void main() {
           confirmationCount: 2,
         ),
       );
-      final resource = await ClaimFactory.createClaim(
+      final resource = await createSignedClaim(
         originDeviceId: 'dev-layer-3',
         payload: const ResourcePayload(
           location: GeoPoint(lat: 12.9750, lon: 77.6000),
@@ -135,7 +135,7 @@ void main() {
     test('Per-type dynamic clustering prevents label-card visual collision', () async {
       // Test that 2 hazard pins placed 60px apart (which previously collided under fixed 45px)
       // are cleanly merged into a cluster under dynamic threshold (60 + 60 + 8 = 128px).
-      final hazard1 = await ClaimFactory.createClaim(
+      final hazard1 = await createSignedClaim(
         originDeviceId: 'dev-h1',
         payload: const HazardReportPayload(
           location: GeoPoint(lat: 12.9716, lon: 77.5946),
@@ -143,7 +143,7 @@ void main() {
           confirmationCount: 1,
         ),
       );
-      final hazard2 = await ClaimFactory.createClaim(
+      final hazard2 = await createSignedClaim(
         originDeviceId: 'dev-h2',
         payload: const HazardReportPayload(
           location: GeoPoint(lat: 12.9720, lon: 77.5950),

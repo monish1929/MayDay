@@ -1,10 +1,13 @@
 // ignore_for_file: avoid_print
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' show join;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:mayday/data/database/database_helper.dart';
 import 'package:mayday/data/database/claim_repository.dart';
-import 'package:mayday/data/claim_factory.dart';
+import '../support/signed_claim.dart';
 import 'package:mayday/data/models/claim_payload.dart';
 import 'package:mayday/data/models/geo_point.dart';
 import 'package:mayday/data/enums.dart';
@@ -15,13 +18,27 @@ void main() {
     databaseFactory = databaseFactoryFfi;
   });
 
+  // This file is about surviving a restart, so it needs a store that outlives
+  // a close. The default in-memory database is discarded the instant it
+  // closes, which would make "persisted" indistinguishable from "lost".
+  //
+  // A fresh directory per test, not one shared file: `flutter test` runs files
+  // concurrently, and a shared path is how these tests previously deadlocked
+  // each other with SQLITE_BUSY.
+  late Directory tempDir;
+
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
-    await DatabaseHelper.instance.resetForTest();
+    tempDir = await Directory.systemTemp.createTemp('mayday_persist_test');
+    await DatabaseHelper.instance
+        .resetForTest(path: join(tempDir.path, 'mayday.db'));
   });
 
   tearDown(() async {
     await DatabaseHelper.instance.close();
+    if (tempDir.existsSync()) {
+      tempDir.deleteSync(recursive: true);
+    }
   });
 
   group('Week 2 Day 1: End-to-End Claim Persistence & App Restart', () {
@@ -34,7 +51,7 @@ void main() {
         location: testLocation,
         headcount: null,
       );
-      final individualSos = await ClaimFactory.createClaim(
+      final individualSos = await createSignedClaim(
         payload: individualSosPayload,
         originDeviceId: 'device-test-1',
       );
@@ -45,7 +62,7 @@ void main() {
         location: testLocation,
         headcount: HeadcountBucket.sixToFifteen,
       );
-      final groupSos = await ClaimFactory.createClaim(
+      final groupSos = await createSignedClaim(
         payload: groupSosPayload,
         originDeviceId: 'device-test-1',
       );
@@ -58,7 +75,7 @@ void main() {
         headcount: HeadcountBucket.twoToFive,
         proxyNote: 'Elderly neighbor trapped on ground floor',
       );
-      final proxySos = await ClaimFactory.createClaim(
+      final proxySos = await createSignedClaim(
         payload: proxySosPayload,
         originDeviceId: 'device-test-1',
       );
@@ -71,7 +88,7 @@ void main() {
         confirmationCount: 1,
         note: 'Water 3ft deep across main street',
       );
-      final hazard = await ClaimFactory.createClaim(
+      final hazard = await createSignedClaim(
         payload: hazardPayload,
         originDeviceId: 'device-test-1',
       );
@@ -84,7 +101,7 @@ void main() {
         pledgedCount: 50,
         claimedReports: 0,
       );
-      final resource = await ClaimFactory.createClaim(
+      final resource = await createSignedClaim(
         payload: resourcePayload,
         originDeviceId: 'device-test-1',
       );
@@ -187,12 +204,12 @@ void main() {
       final repo = ClaimRepository();
       const location = GeoPoint(lat: 12.9716, lon: 77.5946);
 
-      final sos1 = await ClaimFactory.createClaim(
+      final sos1 = await createSignedClaim(
         payload: const SosPayload(location: location),
         originDeviceId: 'device-A',
       );
 
-      final sos2 = await ClaimFactory.createClaim(
+      final sos2 = await createSignedClaim(
         payload: const SosPayload(location: location),
         originDeviceId: 'device-B',
       );
