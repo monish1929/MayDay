@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:mayday/common/device_id.dart';
 import 'package:mayday/ui/models/models.dart';
 import 'package:mayday/ui/theme/app_theme.dart';
 
@@ -13,20 +15,20 @@ enum RescueType { individual, group, proxy }
 /// - Proxy note: optional text field capped at 80 chars (for Proxy only)
 /// - On submit: constructs SosPayload or SosProxyPayload and prints to console
 class RescueFormSheet extends StatefulWidget {
-  final GeoPoint initialLocation;
+  final GeoPoint? initialLocation;
 
   const RescueFormSheet({
     super.key,
-    this.initialLocation = const GeoPoint(lat: 12.9716, lon: 77.5946),
+    this.initialLocation,
   });
 
-  static Future<void> show(BuildContext context, {GeoPoint? location}) {
+  static Future<dynamic> show(BuildContext context, {GeoPoint? location}) {
     return showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) => RescueFormSheet(
-        initialLocation: location ?? const GeoPoint(lat: 12.9716, lon: 77.5946),
+        initialLocation: location,
       ),
     );
   }
@@ -35,10 +37,69 @@ class RescueFormSheet extends StatefulWidget {
   State<RescueFormSheet> createState() => _RescueFormSheetState();
 }
 
+enum LocationStatus { fetching, success, error, manual }
+
 class _RescueFormSheetState extends State<RescueFormSheet> {
   RescueType _rescueType = RescueType.individual;
   HeadcountBucket? _headcountBucket;
   final TextEditingController _proxyNoteController = TextEditingController();
+
+  LocationStatus _locationStatus = LocationStatus.fetching;
+  GeoPoint? _currentLocation;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.initialLocation != null) {
+      _currentLocation = widget.initialLocation;
+      _locationStatus = LocationStatus.manual;
+    } else {
+      _fetchLocation();
+    }
+  }
+
+  Future<void> _fetchLocation() async {
+    try {
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        if (!mounted) return;
+        setState(() => _locationStatus = LocationStatus.error);
+        return;
+      }
+
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+          if (!mounted) return;
+          setState(() => _locationStatus = LocationStatus.error);
+          return;
+        }
+      }
+
+      if (permission == LocationPermission.deniedForever) {
+        if (!mounted) return;
+        setState(() => _locationStatus = LocationStatus.error);
+        return;
+      }
+
+      Position position = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          timeLimit: Duration(seconds: 4),
+        ),
+      );
+
+      if (!mounted) return;
+      setState(() {
+        _currentLocation = GeoPoint(lat: position.latitude, lon: position.longitude);
+        _locationStatus = LocationStatus.success;
+      });
+    } catch (e) {
+      debugPrint('[RescueFormSheet] Location fetch failed: $e');
+      if (!mounted) return;
+      setState(() => _locationStatus = LocationStatus.error);
+    }
+  }
 
   @override
   void dispose() {
@@ -57,65 +118,91 @@ class _RescueFormSheetState extends State<RescueFormSheet> {
     });
   }
 
-  void _submitForm() {
-    final location = widget.initialLocation;
-    ClaimPayload payload;
+  Future<void> _submitForm() async {
+    try {
+      if (_locationStatus == LocationStatus.fetching) {
+        // Still acquiring GPS, prevent submission
+        return;
+      }
 
-    switch (_rescueType) {
-      case RescueType.individual:
-        payload = SosPayload(
-          location: location,
-          headcount: null,
-        );
-        break;
-      case RescueType.group:
-        payload = SosPayload(
-          location: location,
-          headcount: _headcountBucket ?? HeadcountBucket.twoToFive,
-        );
-        break;
-      case RescueType.proxy:
-        final rawNote = _proxyNoteController.text.trim();
-        final note = rawNote.isEmpty ? null : rawNote;
-        payload = SosProxyPayload(
-          location: location,
-          reporterDeviceId: 'local-device-01',
-          headcount: _headcountBucket,
-          proxyNote: note,
-        );
-        break;
-    }
+      GeoPoint location;
+      if (_currentLocation != null) {
+        location = _currentLocation!;
+      } else {
+        debugPrint('[RescueFormSheet] WARNING: Using placeholder Bengaluru location as absolute last resort!');
+        location = const GeoPoint(lat: 12.9716, lon: 77.5946);
+      }
 
-    // Print constructed payload to console — Week 1 scope
-    debugPrint('════════════════════════════════════════════════════════════');
-    debugPrint('[MayDay Form] SUBMITTED RESCUE CLAIM:');
-    debugPrint('  Type: ${_rescueType.name}');
-    debugPrint('  Payload Class: ${payload.runtimeType}');
-    debugPrint('  Location: (${payload.location.lat}, ${payload.location.lon})');
-    if (payload is SosPayload) {
-      debugPrint('  Headcount: ${payload.headcount?.name ?? 'none (Individual)'}');
-    } else if (payload is SosProxyPayload) {
-      debugPrint('  Reporter Device ID: ${payload.reporterDeviceId}');
-      debugPrint('  Headcount: ${payload.headcount?.name ?? 'none specified'}');
-      debugPrint('  Proxy Note: "${payload.proxyNote ?? ''}"');
-    }
-    debugPrint('════════════════════════════════════════════════════════════');
+      final deviceId = await LocalDeviceId.getDeviceId();
+      ClaimPayload payload;
 
-    Navigator.pop(context);
+      switch (_rescueType) {
+        case RescueType.individual:
+          payload = SosPayload(
+            location: location,
+            headcount: null,
+          );
+          break;
+        case RescueType.group:
+          payload = SosPayload(
+            location: location,
+            headcount: _headcountBucket ?? HeadcountBucket.twoToFive,
+          );
+          break;
+        case RescueType.proxy:
+          final rawNote = _proxyNoteController.text.trim();
+          final note = rawNote.isEmpty ? null : rawNote;
+          payload = SosProxyPayload(
+            location: location,
+            reporterDeviceId: deviceId,
+            headcount: _headcountBucket,
+            proxyNote: note,
+          );
+          break;
+      }
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          _rescueType == RescueType.proxy
-              ? 'Proxy SOS broadcast signal generated (Console log)'
-              : 'Rescue SOS broadcast signal generated (Console log)',
-          style: const TextStyle(fontWeight: FontWeight.w600),
+      // Assemble real Claim via ClaimFactory — PERSON_C.md Week 2 Day 1
+      final claim = await ClaimFactory.createClaim(
+        payload: payload,
+        originDeviceId: deviceId,
+      );
+
+      // TODO: SIGNING GAP — Claim originated with placeholder signature (Uint8List(0)).
+      // Real Ed25519 signing over claim.toSignedCoreCbor() is blocked on Phase 4
+      // identity/keypair work (lib/identity/). See CLAIM_SCHEMA.md §5 and PERSON_C.md Week 2 Day 1.
+      await ClaimRepository().insertClaim(claim);
+
+      if (!mounted) return;
+      Navigator.pop(context);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _rescueType == RescueType.proxy
+                ? 'Proxy SOS recorded. It will reach nearby phones as they come into range.'
+                : 'Rescue SOS recorded. It will reach nearby phones as they come into range.',
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+          backgroundColor: AppColors.darkRed,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
         ),
-        backgroundColor: AppColors.darkRed,
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-      ),
-    );
+      );
+    } catch (e, st) {
+      debugPrint('[_RescueFormSheetState] _submitForm error: $e\n$st');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text(
+            'Couldn\'t save — please try again',
+            style: TextStyle(fontWeight: FontWeight.w600),
+          ),
+          backgroundColor: AppColors.darkRed,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ),
+      );
+    }
   }
 
   @override
@@ -177,7 +264,7 @@ class _RescueFormSheetState extends State<RescueFormSheet> {
                       ),
                       SizedBox(height: 2),
                       Text(
-                        'Broadcast an emergency SOS to nearby devices',
+                        'Raise an emergency SOS — it reaches nearby phones over time as they come into range',
                         style: TextStyle(
                           color: AppColors.secondaryText,
                           fontSize: 12,
@@ -194,6 +281,8 @@ class _RescueFormSheetState extends State<RescueFormSheet> {
               ],
             ),
 
+            const SizedBox(height: 20),
+            _buildLocationIndicator(),
             const SizedBox(height: 20),
 
             // ─── Rescue Type Selection ──────────────────────────────
@@ -327,8 +416,8 @@ class _RescueFormSheetState extends State<RescueFormSheet> {
                   const SizedBox(width: 8),
                   Text(
                     _rescueType == RescueType.proxy
-                        ? 'Broadcast Proxy SOS'
-                        : 'Broadcast Rescue SOS',
+                        ? 'Send Proxy SOS'
+                        : 'Send Rescue SOS',
                     style: const TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.w700,
@@ -341,6 +430,78 @@ class _RescueFormSheetState extends State<RescueFormSheet> {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildLocationIndicator() {
+    IconData icon;
+    String text;
+    Color color;
+    bool isInteractive = false;
+
+    switch (_locationStatus) {
+      case LocationStatus.fetching:
+        icon = Icons.location_searching;
+        text = 'Acquiring GPS...';
+        color = AppColors.secondaryText;
+        break;
+      case LocationStatus.success:
+        icon = Icons.my_location;
+        text = 'Using your current location';
+        color = AppColors.darkGreen;
+        break;
+      case LocationStatus.manual:
+        icon = Icons.pin_drop;
+        text = 'Using pinned map location';
+        color = AppColors.darkGreen;
+        break;
+      case LocationStatus.error:
+        icon = Icons.location_off;
+        text = 'GPS unavailable. Tap here to set location on map.';
+        color = AppColors.darkRed;
+        isInteractive = true;
+        break;
+    }
+
+    Widget content = Row(
+      children: [
+        Icon(icon, size: 16, color: color),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            text,
+            style: TextStyle(
+              color: color,
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      ],
+    );
+
+    if (isInteractive) {
+      return GestureDetector(
+        onTap: () => Navigator.pop(context, 'pick_location'),
+        child: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: AppColors.redLight,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppColors.darkRed.withAlpha(50)),
+          ),
+          child: content,
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppColors.borderSubtle.withAlpha(100),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: content,
     );
   }
 

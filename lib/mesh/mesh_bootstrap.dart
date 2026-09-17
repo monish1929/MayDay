@@ -88,12 +88,24 @@ class MeshBootstrap {
 
   /// The Android 12+ BLE permissions.
   ///
-  /// ACCESS_FINE_LOCATION is **deliberately not here.** The manifest declares
-  /// it `maxSdkVersion="30"` to match `neverForLocation` on BLUETOOTH_SCAN, so
-  /// on API 31+ it is correctly unrequestable — and Phase 0 hit a real bug
-  /// where the spike asked for it unconditionally and treated the denial as
-  /// fatal, which made the app refuse to start on a perfectly healthy phone
-  /// (Docs/PERSON_A.md Wk1 D1-2).
+  /// ACCESS_FINE_LOCATION is **deliberately not here, and that is still true
+  /// after the c/app-shell merge — for a narrower reason than before.**
+  ///
+  /// It used to be absent because the manifest capped it at
+  /// `maxSdkVersion="30"`, matching `neverForLocation` on BLUETOOTH_SCAN.
+  /// That cap is now gone: `ui/` tags claims with a real GPS fix, so the app
+  /// has an independent reason to hold location permission (see the manifest
+  /// comment for the full decision). What has not changed is that **the mesh
+  /// does not need it** — `neverForLocation` still holds, and nothing here
+  /// derives position from a scan result. So the mesh must not be the thing
+  /// that asks: Phase 0 hit a real bug where the spike requested it
+  /// unconditionally and treated denial as fatal, which made the app refuse
+  /// to start on a perfectly healthy phone (Docs/PERSON_A.md Wk1 D1-2).
+  ///
+  /// Location is `ui/`'s prompt to raise, at the point a person is placing a
+  /// pin and the reason for asking is visible to them. If the mesh ever needs
+  /// it again (API ≤30 scanning, below), that is a separate request with a
+  /// separate justification — not a quiet addition to this list.
   ///
   /// Consequence worth knowing: on Android 11 and below, BLE scanning still
   /// needs runtime location permission, and that path is **not implemented and

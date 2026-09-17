@@ -8,7 +8,7 @@ import 'package:mayday/ui/theme/app_theme.dart';
 /// - Distinct icon & styling per ClaimType (SOS, Proxy SOS, Hazard, Resource).
 /// - Trust tier appearance: UNCONFIRMED (faint/0.55 opacity), CORROBORATED (full opacity),
 ///   GROUND_CONFIRMED (distinct double-ring + verified shield badge). Read directly from
-///   MockClaim.claimTrust. — CLAIM_SCHEMA.md §3.
+///   Claim.claimTrust. — CLAIM_SCHEMA.md §3.
 /// - Aging SOS: gets MORE visual urgency over time (pulsing animation, beacon halo),
 ///   scaled continuously across three tiers (1hr / 3hr / 6hr+) —
 ///   never fades. — CLAUDE.md §2.3.
@@ -18,7 +18,7 @@ import 'package:mayday/ui/theme/app_theme.dart';
 ///   blocked on B's replica-conflict data (CLAIM_SCHEMA.md §8.1) — not available
 ///   in Week 1 mock data.
 class ClaimPinWidget extends StatefulWidget {
-  final MockClaim claim;
+  final Claim claim;
   final VoidCallback onTap;
 
   const ClaimPinWidget({
@@ -32,7 +32,7 @@ class ClaimPinWidget extends StatefulWidget {
 }
 
 class _ClaimPinWidgetState extends State<ClaimPinWidget>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   late AnimationController _pulseController;
   late Animation<double> _pulseAnimation;
 
@@ -43,7 +43,7 @@ class _ClaimPinWidgetState extends State<ClaimPinWidget>
   int get _agingTier => ClaimDisplayHelpers.agingTier(widget.claim);
 
   /// Bucketed relative-time label for the aging badge.
-  String get _agingLabel => ClaimDisplayHelpers.agingBadgeLabel(widget.claim.mockCreatedAt);
+  String get _agingLabel => ClaimDisplayHelpers.agingBadgeLabel(widget.claim.createdAtLogical);
 
   /// Pulse animation speed scales with aging tier.
   Duration get _pulseDuration => switch (_agingTier) {
@@ -53,7 +53,6 @@ class _ClaimPinWidgetState extends State<ClaimPinWidget>
     _ => const Duration(milliseconds: 1500),
   };
 
-  /// Halo expansion range scales with aging tier.
   double get _pulseEnd => switch (_agingTier) {
     1 => 1.15,  // subtle
     2 => 1.25,  // moderate
@@ -80,6 +79,7 @@ class _ClaimPinWidgetState extends State<ClaimPinWidget>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _pulseController = AnimationController(
       vsync: this,
       duration: _pulseDuration,
@@ -110,7 +110,21 @@ class _ClaimPinWidgetState extends State<ClaimPinWidget>
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused) {
+      if (_pulseController.isAnimating) {
+        _pulseController.stop();
+      }
+    } else if (state == AppLifecycleState.resumed) {
+      if (_isAgingSos && !_pulseController.isAnimating) {
+        _pulseController.repeat(reverse: true);
+      }
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _pulseController.dispose();
     super.dispose();
   }
@@ -143,52 +157,56 @@ class _ClaimPinWidgetState extends State<ClaimPinWidget>
     }
 
     if (_isAgingSos) {
-      return AnimatedBuilder(
-        animation: _pulseAnimation,
-        builder: (context, child) {
-          return Opacity(
-            opacity: opacity,
-            child: GestureDetector(
-              onTap: widget.onTap,
-              child: Stack(
-                alignment: Alignment.center,
-                clipBehavior: Clip.none,
-                children: [
-                  // Pulsing beacon halo for aging SOS — intensity scales
-                  // with _agingTier (1hr/3hr/6hr+). A 6-hour SOS pulses
-                  // faster and larger than a 1-hour SOS.
-                  Container(
-                    width: 54 * _pulseAnimation.value,
-                    height: 54 * _pulseAnimation.value,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: AppColors.darkRed.withAlpha(_haloAlpha),
-                      border: Border.all(
-                        color: AppColors.darkRed.withAlpha(_haloBorderAlpha),
-                        width: 1.5,
+      return RepaintBoundary(
+        child: AnimatedBuilder(
+          animation: _pulseAnimation,
+          builder: (context, child) {
+            return Opacity(
+              opacity: opacity,
+              child: GestureDetector(
+                onTap: widget.onTap,
+                child: Stack(
+                  alignment: Alignment.center,
+                  clipBehavior: Clip.none,
+                  children: [
+                    // Pulsing beacon halo for aging SOS — intensity scales
+                    // with _agingTier (1hr/3hr/6hr+). A 6-hour SOS pulses
+                    // faster and larger than a 1-hour SOS.
+                    Container(
+                      width: 54 * _pulseAnimation.value,
+                      height: 54 * _pulseAnimation.value,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: AppColors.darkRed.withAlpha(_haloAlpha),
+                        border: Border.all(
+                          color: AppColors.darkRed.withAlpha(_haloBorderAlpha),
+                          width: 1.5,
+                        ),
                       ),
                     ),
-                  ),
-                  pinBody,
-                ],
+                    pinBody,
+                  ],
+                ),
               ),
-            ),
-          );
-        },
+            );
+          },
+        ),
       );
     }
 
-    return Opacity(
-      opacity: opacity,
-      child: GestureDetector(
-        onTap: widget.onTap,
-        child: pinBody,
+    return RepaintBoundary(
+      child: Opacity(
+        opacity: opacity,
+        child: GestureDetector(
+          onTap: widget.onTap,
+          child: pinBody,
+        ),
       ),
     );
   }
 
   // ─── SOS & Proxy SOS Pin ───────────────────────────────────────────
-  Widget _buildSosPin(MockClaim claim, {required bool isProxy}) {
+  Widget _buildSosPin(Claim claim, {required bool isProxy}) {
     final payload = claim.payload;
     final isGroundConfirmed = claim.claimTrust == ClaimTrust.groundConfirmed;
 
@@ -257,6 +275,21 @@ class _ClaimPinWidgetState extends State<ClaimPinWidget>
               ),
             ),
 
+          // Unconfirmed badge
+          if (claim.claimTrust == ClaimTrust.unconfirmed)
+            Positioned(
+              bottom: -4,
+              left: -4,
+              child: Container(
+                padding: const EdgeInsets.all(1),
+                decoration: const BoxDecoration(
+                  color: AppColors.surfaceWhite,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.help_outline, size: 12, color: AppColors.secondaryText),
+              ),
+            ),
+
           // Ground confirmed check badge
           if (isGroundConfirmed)
             Positioned(
@@ -322,7 +355,7 @@ class _ClaimPinWidgetState extends State<ClaimPinWidget>
   }
 
   // ─── Hazard Pin ───────────────────────────────────────────────────
-  Widget _buildHazardPin(MockClaim claim) {
+  Widget _buildHazardPin(Claim claim) {
     final payload = claim.payload as HazardReportPayload;
     final isGroundConfirmed = claim.claimTrust == ClaimTrust.groundConfirmed;
 
@@ -396,6 +429,21 @@ class _ClaimPinWidgetState extends State<ClaimPinWidget>
             ),
           ),
 
+          // Unconfirmed badge
+          if (claim.claimTrust == ClaimTrust.unconfirmed)
+            Positioned(
+              bottom: -4,
+              left: -4,
+              child: Container(
+                padding: const EdgeInsets.all(1),
+                decoration: const BoxDecoration(
+                  color: AppColors.surfaceWhite,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.help_outline, size: 12, color: AppColors.secondaryText),
+              ),
+            ),
+
           // Ground confirmed check badge
           if (isGroundConfirmed)
             Positioned(
@@ -416,21 +464,22 @@ class _ClaimPinWidgetState extends State<ClaimPinWidget>
   }
 
   // ─── Resource Pin ─────────────────────────────────────────────────
-  Widget _buildResourcePin(MockClaim claim) {
+  Widget _buildResourcePin(Claim claim) {
     final payload = claim.payload as ResourcePayload;
     final isGroundConfirmed = claim.claimTrust == ClaimTrust.groundConfirmed;
 
     // Range display ('2–6 packets') is blocked on B's replica-conflict
     // data (CLAIM_SCHEMA.md §8.1) — not available in Week 1 mock data.
     // Showing single available count until real uncertainty data exists.
-    final availableText = '${payload.available}';
+    final isOut = payload.available == 0;
+    final availableText = isOut ? 'OUT' : '${payload.available}';
 
     return Container(
       decoration: BoxDecoration(
         color: AppColors.surfaceWhite,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: isGroundConfirmed ? AppColors.deepNavy : AppColors.darkGreen,
+          color: isGroundConfirmed ? AppColors.deepNavy : (isOut ? AppColors.secondaryText : AppColors.darkGreen),
           width: isGroundConfirmed ? 2.5 : 1.8,
         ),
         boxShadow: [
@@ -449,7 +498,7 @@ class _ClaimPinWidgetState extends State<ClaimPinWidget>
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
             decoration: BoxDecoration(
-              color: AppColors.greenLight,
+              color: isOut ? AppColors.grayLight : AppColors.greenLight,
               borderRadius: BorderRadius.circular(8),
             ),
             child: Row(
@@ -457,14 +506,14 @@ class _ClaimPinWidgetState extends State<ClaimPinWidget>
               children: [
                 Icon(
                   _resourceIcon(payload.category),
-                  color: AppColors.darkGreen,
+                  color: isOut ? AppColors.secondaryText : AppColors.darkGreen,
                   size: 16,
                 ),
                 const SizedBox(width: 4),
                 Text(
                   availableText,
-                  style: const TextStyle(
-                    color: AppColors.darkGreen,
+                  style: TextStyle(
+                    color: isOut ? AppColors.secondaryText : AppColors.darkGreen,
                     fontSize: 10,
                     fontWeight: FontWeight.w800,
                   ),
@@ -472,6 +521,21 @@ class _ClaimPinWidgetState extends State<ClaimPinWidget>
               ],
             ),
           ),
+
+          // Unconfirmed badge
+          if (claim.claimTrust == ClaimTrust.unconfirmed)
+            Positioned(
+              bottom: -4,
+              left: -4,
+              child: Container(
+                padding: const EdgeInsets.all(1),
+                decoration: const BoxDecoration(
+                  color: AppColors.surfaceWhite,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.help_outline, size: 12, color: AppColors.secondaryText),
+              ),
+            ),
 
           // Ground confirmed check badge
           if (isGroundConfirmed)
@@ -503,7 +567,7 @@ class _ClaimPinWidgetState extends State<ClaimPinWidget>
 /// Clustered pin marker rendered at low zoom — CLAIM_SCHEMA.md §2, PERSON_C.md §6.
 /// Display-only grouping; underlying records stay separate.
 class ClusterPinWidget extends StatelessWidget {
-  final List<MockClaim> claims;
+  final List<Claim> claims;
   final VoidCallback onTap;
 
   const ClusterPinWidget({

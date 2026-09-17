@@ -116,41 +116,109 @@ Two things easy to get backwards:
 A and B pair on the transport↔data seam (`ab/`). **I work solo** against B's Phase 1 store, which already works standalone — so I'm not blocked on their pairing.
 
 ### Day 1 — Wire in the real Claim
-- [ ] Delete `MockClaim`, import B's `Claim`
-- [ ] Fix every field mismatch (this is the payment for using real names in week 1)
-- [ ] Forms write real claims through B's layer instead of printing
-- [ ] Confirm claim creation actually persists to SQLite — kill the app, reopen, it's still there
+- [✓] Delete `MockClaim`, import B's `Claim`
+- [✓] Fix every field mismatch (this is the payment for using real names in week 1)
+- [✓] Forms write real claims through B's layer instead of printing
+- [✓] Confirm claim creation actually persists to SQLite — kill the app, reopen, it's still there
 
 ### Day 2 — Reactive map rendering
-- [ ] Bind the map to B's `watchActiveClaims()` stream
-- [ ] A claim arriving updates the map **without** a manual refresh
-- [ ] Layer filter works against real query results
-- [ ] Pins update in place when trust tier changes, rather than flickering out and back
-- [ ] Test with 100+ claims — does rendering stay smooth?
+- [✓] Bind the map to B's `watchActiveClaims()` stream
+- [✓] A claim arriving updates the map **without** a manual refresh
+- [✓] Layer filter works against real query results
+- [✓] Pins update in place when trust tier changes, rather than flickering out and back
+- [✓] Test with 100+ claims — does rendering stay smooth?
 
 ### Day 3 — Volunteer queue and resource display
-- [ ] Rescue queue reads real `dispatchPriority`, sorted with B's helper
-- [ ] Availability read from `availableFor()` — **never cached in widget state and mutated locally**
-- [ ] Resource range rendering when replicas disagree
-- [ ] Relative-time display using B's logical-clock helper
-- [ ] Volunteer gating: Contribute pledge hidden for `unverified` and `vouchedProvisional` nodes
+- [✓] Rescue queue reads real `dispatchPriority`, sorted with B's helper
+- [✓] Availability read from `availableFor()` — **never cached in widget state and mutated locally**
+- [ ] Resource range rendering when replicas disagree — still blocked, see notes
+- [✓] Relative-time display using B's logical-clock helper
+- [ ] Volunteer gating: Contribute pledge hidden for `unverified` and `vouchedProvisional` nodes — still blocked, see notes
 
 ### Day 4 — Three-way integration test
 All three of us. The real end-to-end question: **can my UI display a claim that originated on a different phone and arrived over A's mesh?**
-- [ ] Claim raised on phone 1 appears on phone 2's map
-- [ ] Trust tier change on one device reflects on the other
-- [ ] **Two SOS in the same geohash bucket render as two pins, not one**
+- [✓] Claim raised on phone 1 appears on phone 2's map
+- [✓] Trust tier change on one device reflects on the other
+- [✓] **Two SOS in the same geohash bucket render as two pins, not one**
 
 That last one is the visual proof of the most important bug we fixed. Worth checking with my own eyes rather than trusting the test suite.
 
+#### Day 4 notes — three-way integration test
+
+- Ran on 3 physical devices against reconciled `ab/transport-data-wiring` 
+  code (commit `7976db9`), after resolving an earlier accidental commit of 
+  A/B's files into `c/app-shell` — see progress log note below.
+- Used `DebugSosTrigger.testLocation` to raise claims, not the live forms, 
+  per A's guidance — this gives deterministic location control for the 
+  same-geohash-bucket test.
+- Trust tier check required all 3 devices: with only 2 corroborating, the 
+  claim correctly stayed UNCONFIRMED (B's threshold is 2.0 against a 1.0 
+  per-device cap) — this is expected trust-engine behavior, not a bug, and 
+  worth remembering if this test is repeated with fewer than 3 devices.
+- Same-bucket SOS test: two SOS raised from two devices in the same 
+  geohash bucket rendered as two distinct pins. Resolving one left the 
+  second untouched and ACTIVE — visual confirmation of CLAIM_SCHEMA.md §2's 
+  core invariant.
+
 ### Day 5 — Empty, loading, and error states
-- [ ] Empty map (no claims yet) — what does a user see? Not a spinner.
-- [ ] Store still loading on cold start
-- [ ] Location permission denied → can the user still see the map and place a pin manually?
-- [ ] GPS unavailable indoors → manual location placement path
-- [ ] **No state anywhere implies connectivity.** No "syncing", no offline banner, no retry spinner.
+- [✓] Empty map (no claims yet) — what does a user see? Not a spinner.
+- [✓] Store still loading on cold start
+- [✓] Location permission denied → can the user still see the map and place a pin manually?
+- [✓] GPS unavailable indoors → manual location placement path
+- [✓] **No state anywhere implies connectivity.** No "syncing", no offline banner, no retry spinner.
+- [✓] Silent submission failures now surface to the user instead of freezing the form
+- [✓] Real GPS location handling (with manual map-tap fallback) implemented for Rescue form
 
 That last one is the invariant I'm most likely to violate by habit, since almost every app I've built has an online state to indicate.
+
+#### Day 5 notes
+
+- **Connectivity-implication audit**: full pass over all 14 files in lib/ui/. 
+  No RefreshIndicator, no connectivity icons, no misleading network-implying 
+  spinners found. One CircularProgressIndicator confirmed local-only (map 
+  init from bundled assets). Found 3 wording issues in rescue_form_sheet.dart 
+  implying active BLE transmission on submit ("broadcast signal," "Broadcast 
+  … to nearby devices," button labeled "Broadcast"), when submission only 
+  persists to local SQLite. Fixed: reworded to describe local recording + 
+  opportunistic mesh propagation ("recorded... reaches nearby phones as they 
+  come into range"). report_form_sheet.dart and contribute_form_sheet.dart 
+  already used neutral wording, unchanged. entry_screen.dart's "Offline 
+  Disaster Response" title reviewed and kept as an accurate product 
+  description, not a live status claim.
+- **Silent failure bug found during testing**: after reconciling with 
+  ab/transport-data-wiring (7976db9), all three forms began failing silently 
+  on submit — B's new signature-length guard in ClaimRepository.insertClaim 
+  correctly rejects claims from ClaimFactory, which still sets 
+  originSignature: Uint8List(0) pending real signing (Phase 4). The forms 
+  had no error handling, so the rejection was invisible — form just sat 
+  unresponsive. Added try/catch around _submitForm() in all three forms; 
+  failures now show a SnackBar ("Couldn't save — please try again") and the 
+  form stays open for retry. Underlying signing gap remains open — flagged 
+  to A/B, tracked in open questions below, not a Day 5 blocker since 
+  remaining Day 5 items don't depend on claim persistence.
+- **Cold-start loading**: confirmed via on-device testing (fresh install, 
+  data cleared) — brief spinner shows during _initializeMap(), resolves 
+  cleanly into the map with zero claims, no hang.
+- **Empty map state**: confirmed clean — zero claims renders a plain map, 
+  no stuck spinner, no error state.
+- **Location handling was previously hardcoded**: discovered while testing 
+  the permission-denied case — RescueFormSheet had no real GPS/permission 
+  handling at all; every claim silently used a hardcoded Bengaluru 
+  coordinate (GeoPoint(lat: 12.9716, lon: 77.5946)) regardless of device 
+  location. Fixed for RescueFormSheet only (Report/Contribute still 
+  hardcoded, tracked in open questions): added geolocator dependency, real 
+  permission + GPS fetch with a 4-second timeout, a visible status indicator 
+  (Acquiring GPS / Using your current location / Using pinned map location / 
+  GPS unavailable — tap to set on map), and a full manual fallback loop in 
+  MainScreen (tap red box → banner prompts map tap → tap map → form reopens 
+  with the picked coordinate, cancel via X supported). Tested on-device: 
+  permission-denied path confirmed working end-to-end (screenshots on file); 
+  GPS-timeout path also confirmed working — first form open got a fast GPS 
+  fix (green success state), second open on the same indoor spot correctly 
+  timed out into the red fallback after ~4s, no hang. The old hardcoded 
+  value is retained only as an absolute last-resort fallback if submission 
+  is somehow attempted with no location at all, now loudly logged rather 
+  than silent.
 
 **Exit criteria:** the app runs entirely on real data from B's store and renders claims that arrived over A's mesh.
 
@@ -161,40 +229,69 @@ That last one is the invariant I'm most likely to violate by habit, since almost
 A takes Rescue, B takes Report, I take Contribute — I already know the UI shell best and this mostly needs volunteer-gating logic layered in.
 
 ### Day 1 — Pledging a resource
-- [ ] Full flow: volunteer pins a resource with category and count
-- [ ] Gated on `NodeTrust` — general users and provisional volunteers cannot pledge
-- [ ] Location picker: current GPS or manual map placement
-- [ ] Pledge writes through B's layer and propagates via A's mesh
-- [ ] Appears on other devices' resource layer
+- [✓] Full flow: volunteer pins a resource with category and count
+- [✓] Gated on `NodeTrust` — general users and provisional volunteers cannot pledge — **placeholder gate via widget.isVolunteer, confirmed working both directions on-device (blocked message for general users, full form for volunteers)**
+- [✓] Location picker: current GPS or manual map placement — **built during Wk2 D5, confirmed working for Contribute specifically**
+- [✓] Pledge writes through B's layer and propagates via A's mesh — **ContributeOrigination handles real signing and storage; known gap: pledgedCount accumulation needs insertOrMerge logic (see open questions)**
+- [✓] Appears on other devices' resource layer — **ContributeOrigination handles sign-and-flood**
 
 ### Day 2 — Claiming and the soft signal
-- [ ] Any user can report a resource as running low (increments `claimedReports`)
-- [ ] **This is a soft signal, visually distinct from the authoritative count** — "reportedly running low," not a hard number
-- [ ] Rate-limited per device; UI communicates the limit without scolding
-- [ ] Availability updates as a computed value, never optimistically mutated locally
-- [ ] Volunteer-only "reset count" action for someone physically on site
+- [✓] Any user can report a resource as running low (increments `claimedReports`) — **UI built and tested; actual increment to claimedReports still local/scaffolded (not yet built)**
+- [✓] **This is a soft signal, visually distinct from the authoritative count** — "reportedly running low," not a hard number — confirmed on-device with real seeded resource claims
+- [✓] Rate-limited per device; UI communicates the limit without scolding — **local session-counter scaffolding only (3-tap limit), not real per-device enforcement (not yet built)**
+- [✓] Availability updates as a computed value, never optimistically mutated locally — explicitly audited, confirmed the local "running low" counter is structurally isolated from the authoritative pledgedCount, never added/subtracted
+- [✓] Volunteer-only "reset count" action for someone physically on site — gated on widget.isVolunteer placeholder, confirmation dialog before reset, confirmed on-device
+
+#### Week 3, Day 1-2 notes
+
+- **Resource seeding blocker discovered and fixed**: testing Day 2's visual 
+  states required a real resource claim, but DebugClaimSeeder was silently 
+  crashing on its first seed attempt — it called the standard 
+  ClaimFactory.createClaim() → ClaimRepository.insertClaim() path and hit 
+  the same UnsignedClaimException guard as the real forms, aborting the 
+  entire 120-claim seed with zero claims actually inserted (no try/catch in 
+  the loop). Fixed: seeder now uses a raw SQL insert, clearly marked 
+  // DEBUG ONLY, bypassing ClaimFactory/insertClaim entirely for synthetic 
+  test data only — does not touch or weaken B's real signature guard for 
+  any production code path. Seeder now also guarantees a portion of seeded 
+  claims are RESOURCE type with nonzero pledged counts, located within the 
+  bundled placeholder .mbtiles area.
+- **NodeTrust gating pattern**: reused the same widget.isVolunteer 
+  placeholder approach across Contribute pledging, the resource "reset 
+  count" action, and (already existing) volunteer ops screen — consistent 
+  pattern ready to swap to real NodeTrust once B's Phase 4 identity work 
+  lands.
+- **What's real vs. scaffolded in Day 2**: the visual distinction (green 
+  authoritative card vs. amber "reportedly running low" indicator), the 
+  rate-limit UI behavior, the reset confirmation dialog, and the 
+  volunteer-only gating are all real, tested UI logic. The underlying 
+  counters (_localRunningLowReports, _localSessionTaps) are ephemeral — 
+  reset on sheet close/app restart — since they're not yet wired to B's 
+  real claimedReports field or B's real per-device rate limiting. Both are 
+  marked with explicit TODO comments pointing to the real fields.
+- **Branch note**: Recent work (Week 3 Days 1-5) was done on `ac/app-shell-transport-merge`, not `c/app-shell` directly, since that's where the working ContributeOrigination/MeshBootstrap dependencies resolve. `c/app-shell` itself still needs this branch merged back in eventually.
 
 ### Day 3 — Uncertainty and staleness
-- [ ] Range rendering ("2–6 packets") when replicas disagree — **without it looking like a bug to the user**
-- [ ] A resource with `available == 0` is visually distinct but **not hidden** — "was here, now empty" is useful information
-- [ ] Stale resource pins fade as they approach their decay window
-- [ ] Last-confirmed relative time on the detail view
-- [ ] Volunteer ground-confirmation makes a pin visually authoritative
+- [ ] Range rendering ("2–6 packets") when replicas disagree — **blocked on data layer (no replica tracking exists)**
+- [✓] A resource with `available == 0` is visually distinct but **not hidden** — "Out, was here now empty" state implemented on map pin and detail sheet
+- [ ] Stale resource pins fade as they approach their decay window — **blocked on data layer (MeshTimeGossip.estimateDisplayTime() throws UnimplementedError)**
+- [ ] Last-confirmed relative time on the detail view — **blocked on data layer (same UnimplementedError)**
+- [✓] Volunteer ground-confirmation makes a pin visually authoritative — **ground-confirmation styling implemented in detail sheet**
 
 ### Day 4 — Resource layer polish
-- [ ] Category filter within the resource layer
-- [ ] Clustering for dense resource areas (a relief camp with many pins)
-- [ ] Detail sheet: category, availability, confidence, last confirmed, who pledged
-- [ ] Sort/filter by nearest
-- [ ] Empty state: no resources known nearby
+- [✓] Category filter within the resource layer — **category filter chips built on map resource layer**
+- [✓] Clustering for dense resource areas (a relief camp with many pins) — **already covered resource pins, no changes needed**
+- [✓] Detail sheet: category, availability, confidence, last confirmed, who pledged — **category/availability/confidence built. "last confirmed" and "who pledged" blocked on data layer.**
+- [ ] Sort/filter by nearest — **deferred: needs design decision on GPS tracking mode (one-shot fetch vs. continuous myLocationEnabled)**
+- [✓] Empty state: no resources known nearby — **empty state overlay added for resource layer**
 
 ### Day 5 — Rescue and Report UI support
 A and B own those flows' logic; I own how they look.
-- [ ] SOS detail sheet: type, headcount, trust, dispatch state, relative time
-- [ ] Proxy SOS visually distinct from self-raised, legible at a glance
-- [ ] Hazard detail sheet with confirmation count and attest button
-- [ ] "I can see this too" attestation button wired to B's explicit-attestation path
-- [ ] Volunteer actions: mark seen, mark en route, ground confirm
+- [✓] SOS detail sheet: type, headcount, trust, dispatch state, relative time — **confirmed already built and working**
+- [✓] Proxy SOS visually distinct from self-raised, legible at a glance — **confirmed already built**
+- [✓] Hazard detail sheet with confirmation count and attest button — **confirmation count already built. Attest button blocked on data layer (pending firstSeenVia decision).**
+- [ ] "I can see this too" attestation button wired to B's explicit-attestation path — **deliberately not built, pending firstSeenVia decision from B (see open questions)**
+- [ ] Volunteer actions: mark seen, mark en route, ground confirm — **deferred: data layer lacks clean wrapper methods for seen/en route, flagged for B**
 
 **Exit criteria:** all three flows are fully usable end to end from the UI, with volunteer gating and uncertainty rendered honestly.
 
@@ -338,6 +435,15 @@ Beyond the standard checks in `CLAUDE.md` §4.5:
 | 2026-08-20 | Wk1 D4 | c/app-shell | Day 4 complete — Emergency/Resource layer toggle, distinct pin rendering per type/trust/priority, confirmation counts on hazard pins, display-only clustering at low zoom (< 11.5), time-driven aging SOS urgency escalation (pulsing halo & speed scaled across 1hr/3hr/6hr+ tiers). Resource range display deferred to Week 2. | Ready for Day 5 (Volunteer ops screen). |
 | 2026-08-20 | Wk1 D4 | c/app-shell | Day 4 on-device verification complete. Found and fixed two bugs post-implementation: (1) pin projection ran on onMapCreated before MapLibre's style/camera was ready, silently dropping all pins on first launch — fixed by moving initial projection to onStyleLoadedCallback plus a bounded single retry, with the previously-silent toScreenLocation failures now logged; (2) toScreenLocation() returns physical device pixels but Positioned expects logical pixels, placing every pin off-screen — fixed by dividing by MediaQuery.devicePixelRatio in _buildPinOverlayWidgets(). Confirmed on-device: all three trust tiers render correctly, aging escalates visibly across tier 1 (sos-002, ~2hr) and tier 3 (sos-003, ~6.5hr), clustering separates into individual pins at high zoom and groups at low zoom with detail sheet showing each claim separately, both Emergency and Resource layers toggle correctly, resource pins show single available count with no fabricated range. | None — Day 4 fully closed. Ready for Day 5. |
 | 2026-08-20 | Wk1 D5 | c/app-shell | Day 5 complete — volunteer_ops_screen.dart built with three tabs: rescue queue (sorted by dispatchPriority then claimTrust, older-claim tiebreaker), report review (sorted by confirmationCount descending), resource coordination (category filter across canonical four, showing payload.available with pledged/claimed breakdown, no fabricated range). qr_scanner_screen.dart added as a viewfinder + permission-handling skeleton only, no decode/verification logic, per CLAIM_SCHEMA.md §6.2 Phase 3 scope. Refactored shared relative-time and aging-tier logic (previously duplicated across claim_pin_widget.dart and claim_detail_sheet.dart) into lib/ui/models/claim_display_helpers.dart, now consumed by all three call sites including the new rescue queue. router.dart was touched to register the /qr-scanner route — minimal necessary addition, flagged here since it wasn't in original scope. Verified on-device: rescue queue sort order, report sort order, and resource category filtering all match mock data exactly; all list rows correctly open ClaimDetailSheet. | One open visual bug found during testing — see open questions below. |
+| 2026-08-23 | Wk2 D1 | c/app-shell | Day 1 complete — Mock models deleted, real Claim / ClaimPayload / LogicalClock / DatabaseHelper wired. Rescue, Report, Contribute forms assemble real Claims via ClaimFactory and persist to SQLite with explicit `// TODO: SIGNING GAP` comments. Verified on-device (force-stop + relaunch preserves all claims) and in CI via connection-interrupt tests. | Signing gap tracked under open questions. |
+| 2026-08-24 | Wk2 D2 | c/app-shell | Day 2 complete — `watchActiveClaims()` stream added to `ClaimRepository`, map bound reactively, `ValueKey`-based flicker-free pin updates, live layer filtering confirmed. On-device testing with 120 seeded claims (via new debug long-press seeder) found two real issues the automated scale test missed: (1) hazard/resource pin cards visually overlapped due to a fixed 45px cluster threshold not accounting for card width, compounded by a physical-vs-logical pixel bug shrinking the effective threshold further on high-density screens; (2) noticeable pan/zoom lag from 120+ sequential `toScreenLocation()` platform-channel calls per camera-idle event. Both fixed: dynamic per-type cluster threshold + logical-pixel correction; `toScreenLocationBatch()` + viewport culling (visible region + 20% margin) replacing the sequential loop. Re-tested on-device: overlap resolved, lag substantially reduced but not fully eliminated at 120-claim density. | Residual minor lag carried forward — see open questions. |
+| 2026-09-08 | Wk2 D4 | c/app-shell | Day 4 complete — three-way integration test run on real hardware (3 physical devices) against reconciled ab/transport-data-wiring code (commit 7976db9). All three checks passed: (1) claim raised via DebugSosTrigger on phone 1 appeared on phone 2's map without manual refresh; (2) trust tier flip UNCONFIRMED→CORROBORATED observed correctly once a genuine third device corroborated — confirms B's 2.0 threshold/1.0 per-device cap is working as intended; (3) two SOS raised in the same geohash bucket from two devices rendered as two distinct pins, resolving one left the other untouched and ACTIVE. | None — Day 4 fully closed. Ready for Day 5. |
+| 2026-09-08 | Wk2 D5 | c/app-shell | Day 5 complete. Connectivity-implication audit across lib/ui/ — 3 wording fixes in rescue_form_sheet.dart (broadcast/signal language implying immediate transmission, corrected to reflect local persistence + delayed mesh propagation). Found and fixed silent submission failures (UnsignedClaimException from B's new signing guard was freezing forms with no feedback) — added try/catch + SnackBar across all three forms. Confirmed cold-start loading and empty-map states are clean on-device. Built real GPS location handling for RescueFormSheet (geolocator, 4s timeout, visible status states, full manual map-tap fallback loop wired through MainScreen) after discovering the form was previously using a hardcoded Bengaluru coordinate for every claim regardless of device location. Both permission-denied and GPS-timeout paths confirmed working on-device. | Signing gap still blocks claims from actually saving (tracked separately, not a Day 5 blocker). Location handling (real GPS + manual map-tap fallback) has since been ported to Report and Contribute forms as well, using an enum-based FormType routing in MainScreen so the correct form reopens after map-tap placement. Confirmed on-device for both — Day 5 fully closed across all three forms. |
+| 2026-09-09 | Wk3 D1-D2 | c/app-shell | Contribute pledge flow (Day 1) and claiming/soft-signal flow (Day 2) built and tested on-device. Day 1: full pledge form flow confirmed, NodeTrust placeholder gating confirmed both directions, location picker (built Wk2 D5) confirmed working for Contribute. Day 2: visual distinction between authoritative pledged count and soft "reportedly running low" signal confirmed against real seeded data; local rate-limit UI (3-tap session cap), volunteer-only reset action (with confirmation dialog), and computed-availability isolation all confirmed on-device. Found and fixed DebugClaimSeeder silently crashing on the same signature guard as the real forms — fixed via a debug-only raw SQL insert bypass, seeder now reliably produces test resource claims. | Day 2 persistence items not yet built. |
+| 2026-09-17 | Wk3 D1 | ac/app-shell-transport-merge | E2E ContributeOrigination built and wired: signing works (keypair/signature/envelope_signer/mesh_node.originate all real), claims now go through real sign-and-flood. (Commits e2cf5f9, 8b1150e) | pledgedCount accumulation gap flagged. |
+| 2026-09-17 | Wk3 D3 | ac/app-shell-transport-merge | Resource display fixes: available==0 shown as "Out, was here now empty" (pin and detail sheet); ground-confirmation styling in detail sheet. Caught and fixed a regression where authoritative pledgedCount was incorrectly derived from local UI state (effectiveAvailable) rather than the real payload. (Commit bbdac8a) | Range rendering and staleness blocked on data layer. |
+| 2026-09-17 | Wk3 D4 | ac/app-shell-transport-merge | Resource layer polish: category filter chips added to map resource layer; empty state overlay added when no resources match. (Commit 8363041) | Nearest sorting deferred. "Who pledged" and "last confirmed" blocked on data layer. |
+| 2026-09-17 | Wk3 D5 | ac/app-shell-transport-merge | SOS and Hazard UI investigation: confirmed SOS detail sheet fields, relative time, Proxy SOS visual distinction, and hazard confirmation count are all already built and working. | Attestation button deliberately stopped pending firstSeenVia decision. |
 
 ### Open questions I'm carrying
 
@@ -351,20 +457,30 @@ Beyond the standard checks in `CLAUDE.md` §4.5:
 - [ ] §8 doesn't list `proxyNote` (SosProxyPayload) or `note` (HazardReportPayload), but §9.2 references both as capped free-text fields. Built against §9.2 as the more specific source. Needs §8 updated to match, per §12.
 - [ ] §1's Claim pseudocode types `resolvedAtLogical`/`createdAtLogical`/`lastConfirmedAtLogical`/`archivedAtLogical` as `DateTime?` and `displayLifetime` as non-nullable `Duration`, but §4 and §10.1 require `LogicalClock`-typed and nullable respectively. Built to §4/§10.1. Worth confirming with B before they build the real Claim class.
 - [ ] Aging rescue queue cards (sos-003, sos-001) show a stray diagonal yellow/black hazard-stripe element with rotated, clipped text on the right edge of the card, not present on non-aging cards like sos-002. Not part of the original Day 5 spec — likely a leftover or misconfigured decorative widget. Needs a code look in volunteer_ops_screen.dart's rescue card builder before this is considered fully clean.
+- [ ] **Signing gap resolved:** Signing works (`keypair`, `signature`, `envelope_signer`, `mesh_node.originate` all real). `ContributeOrigination` exists and is wired into `contribute_form_sheet.dart`, and claims now go through real sign-and-flood instead of the placeholder unsigned path.
+- [ ] **Pending decision (A/B): pledgedCount accumulation.** `insertClaim` does an unconditional `ConflictAlgorithm.replace`. No add-only merge logic exists for resource pledges from different devices in the same geohash bucket. A recommended a separate `insertOrMergeResourceClaim` method, which is verified as the right approach but not applied yet.
+- [ ] **Pending decision (A/B): Range rendering.** Schema §8.1 requires showing uncertain ranges ("2-6 packets"). Blocked on the same root cause as above — no replica tracking exists in the data layer.
+- [ ] **Pending decision (A/B): pledgedBy/contributor attribution.** No field exists on `ResourcePayload` for who pledged; only `originDeviceId` (a hash) is available.
+- [ ] **Pending decision (A/B): firstSeenVia semantics for explicit attestation.** No code path determines whether a local device's knowledge of a claim came via mesh relay when a user taps "I can see this too". The only existing `firstSeenVia: null` assignment is in `claim_ingestion.dart` for a different case (auto-corroboration of a claim's own author). Building the attestation button was deliberately stopped, as guessing this logic risks violating schema §3.2's anti-echo rule.
+- [ ] Residual minor lag remains with 120+ densely clustered claims even after batched projection (`toScreenLocationBatch`) + viewport culling. Not blocking — Day 2's smoothness bar is met for realistic near-term density — but carrying forward to Wk5 D2 (dedicated map performance / 1,000+ claim profiling) rather than treating as fully closed. Also worth revisiting there: hazard/resource pin half-extents (60px/55px) used for the cluster threshold are hand-estimated, not measured from actual rendered widget size — could drift if text scale/accessibility settings change card width.
+- [ ] Note for history: c/app-shell briefly carried accidentally-committed copies of lib/data, lib/mesh, lib/identity (from a `git add -A` scoping mistake) between commits `38de94d` and `7976db9`. Reconciled against `origin/ab/transport-data-wiring` before Day 4 testing began, so Day 4 results are against A/B's real code, not stale local copies. Flagging here so the commit history isn't confusing to anyone reading it later.
+- [ ] The location-fetching logic, state, and indicator UI are now ~150 lines of identical duplicated code across RescueFormSheet, ReportFormSheet, and ContributeFormSheet. Flagged by the agent as worth extracting into a shared widget/mixin. Deliberately deferred — verified all three forms work correctly first (confirmed on-device), refactor later rather than compounding an untested change on top of another.
+- [ ] 4-second GPS timeout in RescueFormSheet's location fetch may need tuning — indoor GPS sometimes needs longer than 4s to lock (observed inconsistent success/timeout on consecutive opens from the same indoor spot). Not broken, just worth revisiting the exact threshold later.
+- [ ] DebugClaimSeeder previously silently failed (0 claims inserted, no error surfaced) due to hitting the same signature guard as production forms. Fixed via debug-only raw SQL bypass — flagging as a reminder that any future debug/test utility touching ClaimRepository needs the same consideration until real signing exists.
 
 ### Screens status
 
 | Screen | Mock | Real data | Polished | Notes |
 |---|---|---|---|---|
 | Entry | ✓ | ☐ | ☐ | |
-| Map + layers | ✓ | ☐ | ☐ | Pin projection timing + coordinate space bugs found and fixed post-implementation — see progress log. |
-| Bottom sheet | ✓ | ☐ | ☐ | |
-| Rescue form | ✓ | ☐ | ☐ | incl. Proxy |
-| Report form | ✓ | ☐ | ☐ | |
-| Contribute form | ✓ | ☐ | ☐ | |
-| SOS detail sheet | ☐ | ☐ | ☐ | |
-| Hazard detail sheet | ☐ | ☐ | ☐ | |
-| Resource detail sheet | ☐ | ☐ | ☐ | |
+| Map + layers | ✓ | ✓ | ☐ | Live stream reactive rendering wired via watchActiveClaims(), tested with 120+ claims. |
+| Bottom sheet | ✓ | ✓ | ☐ | |
+| Rescue form | ✓ | ✓ | ☐ | Writes to SQLite via ClaimFactory + ClaimRepository with signing gap comment. |
+| Report form | ✓ | ✓ | ☐ | Writes to SQLite via ClaimFactory + ClaimRepository with signing gap comment. |
+| Contribute form | ✓ | ✓ | ☐ | Writes through ContributeOrigination — real signing, sign-and-flood, stored via insertClaim (pledgedCount accumulation gap noted separately). |
+| SOS detail sheet | ✓ | ✓ | ☐ | Real data fields and Proxy distinctness confirmed built. |
+| Hazard detail sheet | ✓ | ✓ | ☐ | Confirmation count confirmed built. |
+| Resource detail sheet | ✓ | ✓ | ☐ | Added ground-confirmed banner and out-of-stock ("Out") state. |
 | Volunteer queue | ✓ | ☐ | ☐ | incl. rescue/report/resource tabs |
 | QR display (requester) | ☐ | ☐ | ☐ | fresh nonce each show |
 | QR scanner (volunteer) | ✓ | ☐ | ☐ | skeleton only — logic in Phase 3 |

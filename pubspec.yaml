@@ -35,7 +35,11 @@ dependencies:
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
   sqflite: ^2.4.3
+
+  # Resolves the on-device path the bundled .mbtiles is copied to before the
+  # loopback tile server reads it.
   path_provider: ^2.1.6
+
   cbor: ^6.5.1
   crypto: ^3.0.7
   dart_geohash: ^2.1.0
@@ -74,6 +78,11 @@ dependencies:
   # two unrelated jobs, deliberately not shared.
   sqlite3: ^2.4.1
   sqlite3_flutter_libs: ^0.5.24
+
+  # Real GPS fix for claim location (Wk2 D5). Device sensor only — this reads
+  # the radio's own position and talks to nothing (CLAUDE.md §1.2).
+  geolocator: ^14.0.3
+  qr_flutter: ^4.1.0
 
 dev_dependencies:
   flutter_test:
