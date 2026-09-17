@@ -350,7 +350,8 @@ That last check is worth more than any amount of internal design review.
 
 ### Day 1 — Real offline map tiles
 - [ ] Generate `.mbtiles` for an actual target district at low zoom
-- [ ] Measure real size; feed it into the storage budget with B
+- `[x]` Measure real size; feed it into the storage budget with B
+  - *Note: Wayanad z8-14 is 6.26MB. Budget updated.*
 - [ ] Confirm tile eviction happens **before** active SOS records under pressure
 - [ ] Bundle at install; verify a fresh install has working maps with no network
 - [ ] Decide the district-scoping approach with the team
@@ -456,7 +457,8 @@ Beyond the standard checks in `CLAUDE.md` §4.5:
 - [ ] Multi-language: MVP scope or backlog? — team call
 - [ ] §8 doesn't list `proxyNote` (SosProxyPayload) or `note` (HazardReportPayload), but §9.2 references both as capped free-text fields. Built against §9.2 as the more specific source. Needs §8 updated to match, per §12.
 - [ ] §1's Claim pseudocode types `resolvedAtLogical`/`createdAtLogical`/`lastConfirmedAtLogical`/`archivedAtLogical` as `DateTime?` and `displayLifetime` as non-nullable `Duration`, but §4 and §10.1 require `LogicalClock`-typed and nullable respectively. Built to §4/§10.1. Worth confirming with B before they build the real Claim class.
-- [ ] Aging rescue queue cards (sos-003, sos-001) show a stray diagonal yellow/black hazard-stripe element with rotated, clipped text on the right edge of the card, not present on non-aging cards like sos-002. Not part of the original Day 5 spec — likely a leftover or misconfigured decorative widget. Needs a code look in volunteer_ops_screen.dart's rescue card builder before this is considered fully clean.
+- `[ ]` Aging rescue queue cards show a stray diagonal yellow/black hazard-stripe element with rotated, clipped text on the right edge.
+  - *Resolved*: (Update: The original diagnosis of "stray widget" was wrong. It is Flutter's RenderFlex overflow indicator caused by fixed 48x48 constraints on wide pill cards. Reverted to open until verified on-device).
 - [ ] **Signing gap resolved:** Signing works (`keypair`, `signature`, `envelope_signer`, `mesh_node.originate` all real). `ContributeOrigination` exists and is wired into `contribute_form_sheet.dart`, and claims now go through real sign-and-flood instead of the placeholder unsigned path.
 - [ ] **Pending decision (A/B): pledgedCount accumulation.** `insertClaim` does an unconditional `ConflictAlgorithm.replace`. No add-only merge logic exists for resource pledges from different devices in the same geohash bucket. A recommended a separate `insertOrMergeResourceClaim` method, which is verified as the right approach but not applied yet.
 - [ ] **Pending decision (A/B): Range rendering.** Schema §8.1 requires showing uncertain ranges ("2-6 packets"). Blocked on the same root cause as above — no replica tracking exists in the data layer.
