@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 import 'package:mayday/identity/keypair.dart';
 import 'package:mayday/ui/theme/app_theme.dart';
 
@@ -79,29 +80,22 @@ class _VolunteerIdentityScreenState extends State<VolunteerIdentityScreen> {
                   ),
                   const SizedBox(height: 32),
 
-                  // Placeholder for QR Code since qr_flutter is not in pubspec
-                  Container(
-                    width: 200,
-                    height: 200,
-                    decoration: BoxDecoration(
-                      color: AppColors.creamBackground,
-                      border: Border.all(color: AppColors.borderMedium, width: 2),
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    alignment: Alignment.center,
-                    child: const Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.qr_code_2, size: 48, color: AppColors.borderMedium),
-                        SizedBox(height: 8),
-                        Text(
-                          '[QR Code Placeholder]',
-                          style: TextStyle(
-                            color: AppColors.secondaryText,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
+                  // QR Code
+                  Center(
+                    child: Container(
+                      width: 220,
+                      height: 220,
+                      decoration: BoxDecoration(
+                        color: AppColors.surfaceWhite,
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      padding: const EdgeInsets.all(16),
+                      child: QrImageView(
+                        data: base64Encode(_keyPair!.publicKey),
+                        version: QrVersions.auto,
+                        errorCorrectionLevel: QrErrorCorrectLevel.M,
+                        backgroundColor: Colors.white,
+                      ),
                     ),
                   ),
                   const SizedBox(height: 24),

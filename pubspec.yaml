@@ -82,6 +82,7 @@ dependencies:
   # Real GPS fix for claim location (Wk2 D5). Device sensor only — this reads
   # the radio's own position and talks to nothing (CLAUDE.md §1.2).
   geolocator: ^14.0.3
+  qr_flutter: ^4.1.0
 
 dev_dependencies:
   flutter_test:
