@@ -1,0 +1,4 @@
+# Git hooks are shell scripts run by sh. On Windows they must keep LF endings —
+# with CRLF, sh fails with "bad interpreter" and the hook silently never runs,
+# which for the commit-msg hook means the thing it guards against comes back.
+.githooks/* text eol=lf

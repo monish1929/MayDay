@@ -1,0 +1,27 @@
+#!/bin/sh
+# Strip AI co-authorship trailers before a commit is written.
+#
+# MayDay is coursework: the commit log is the record of who did the work.
+# An agent-added "Co-Authored-By: Claude ..." line puts a non-person in that
+# record and shows up on GitHub as a second contributor on the commit.
+#
+# Deliberately narrow: this removes ONLY the Claude/agent trailers and the
+# "Generated with Claude Code" line. Real human co-author trailers
+# (e.g. Co-Authored-By: Amritha-M <...>) are left untouched -- pairing
+# attribution is something we want to keep.
+#
+# Enable (each person, once per clone):
+#   git config core.hooksPath .githooks
+
+msg_file="$1"
+tmp_file="$msg_file.tmp"
+
+grep -viE '^[[:space:]]*(co-authored-by:[[:space:]]*claude|🤖[[:space:]]*generated with|generated with \[claude code\])' \
+    "$msg_file" > "$tmp_file"
+
+# Collapse any trailing blank lines the removal left behind.
+while [ -s "$tmp_file" ] && [ -z "$(tail -n 1 "$tmp_file")" ]; do
+    sed -i '$ d' "$tmp_file"
+done
+
+mv "$tmp_file" "$msg_file"
