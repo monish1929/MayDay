@@ -87,9 +87,22 @@ class DatabaseHelper {
     ''');
   }
 
+  /// Closes the store and drops the handle, so the next [database] call opens
+  /// a fresh one.
+  ///
+  /// Dropping `_database` is the whole point. Without it this singleton goes
+  /// on handing out a CLOSED handle for the rest of the process, and every
+  /// later read fails with `database_closed` — including the read that puts
+  /// SOS pins on the map. Closing must not be a one-way door (§1.1).
+  ///
+  /// Reads the field directly rather than going through [database]: the getter
+  /// OPENS a database when none is held, so the old version could open one
+  /// purely in order to close it.
   Future<void> close() async {
-    final db = await instance.database;
-    db.close();
+    final db = _database;
+    if (db == null) return;
+    await db.close();
+    _database = null;
   }
 
   /// Test seam only — switches the store to an in-memory database and drops
@@ -102,8 +115,13 @@ class DatabaseHelper {
   ///
   /// Never call this from app code — §1.1 says an active SOS is never
   /// silently discarded, and this discards everything.
-  Future<void> resetForTest() async {
-    _overridePath = inMemoryDatabasePath;
+  /// Pass [path] when a test needs the store to SURVIVE a close — testing
+  /// that claims are still there after an app restart, for instance. An
+  /// in-memory database is discarded the moment it closes, so that test cannot
+  /// be written against the default. Give it a unique temp file, never a
+  /// shared one, or concurrent test files race for it again.
+  Future<void> resetForTest({String? path}) async {
+    _overridePath = path ?? inMemoryDatabasePath;
     if (_database != null) {
       await _database!.close();
       _database = null;
