@@ -133,6 +133,7 @@ class _ClaimDetailSheetState extends State<ClaimDetailSheet> {
               ),
               IconButton(
                 icon: const Icon(Icons.close, color: AppColors.secondaryText),
+                tooltip: 'Close',
                 onPressed: () => Navigator.pop(context),
               ),
             ],
@@ -235,6 +236,7 @@ class _ClaimDetailSheetState extends State<ClaimDetailSheet> {
         ),
         IconButton(
           icon: const Icon(Icons.close, color: AppColors.secondaryText),
+          tooltip: 'Close',
           onPressed: () => Navigator.pop(context),
         ),
       ],

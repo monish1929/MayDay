@@ -132,7 +132,7 @@ class _ClaimPinWidgetState extends State<ClaimPinWidget>
   @override
   Widget build(BuildContext context) {
     final claim = widget.claim;
-
+    final semanticLabel = _pinSemanticLabel(claim);
     // Trust tier opacity — UNCONFIRMED faint, CORROBORATED/GROUND_CONFIRMED full opacity
     final double opacity = switch (claim.claimTrust) {
       ClaimTrust.unconfirmed => 0.55,
@@ -157,49 +157,71 @@ class _ClaimPinWidgetState extends State<ClaimPinWidget>
     }
 
     if (_isAgingSos) {
-      return RepaintBoundary(
-        child: AnimatedBuilder(
-          animation: _pulseAnimation,
-          builder: (context, child) {
-            return Opacity(
-              opacity: opacity,
-              child: GestureDetector(
-                onTap: widget.onTap,
-                child: Stack(
-                  alignment: Alignment.center,
-                  clipBehavior: Clip.none,
-                  children: [
-                    // Pulsing beacon halo for aging SOS — intensity scales
-                    // with _agingTier (1hr/3hr/6hr+). A 6-hour SOS pulses
-                    // faster and larger than a 1-hour SOS.
-                    Container(
-                      width: 54 * _pulseAnimation.value,
-                      height: 54 * _pulseAnimation.value,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: AppColors.darkRed.withAlpha(_haloAlpha),
-                        border: Border.all(
-                          color: AppColors.darkRed.withAlpha(_haloBorderAlpha),
-                          width: 1.5,
-                        ),
+      return Semantics(
+        label: semanticLabel,
+        button: true,
+        child: RepaintBoundary(
+          child: AnimatedBuilder(
+            animation: _pulseAnimation,
+            builder: (context, child) {
+              return Opacity(
+                opacity: opacity,
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: widget.onTap,
+                  child: SizedBox(
+                    // Minimum 48dp tap target — PERSON_C.md Wk4 D4.
+                    width: 48,
+                    height: 48,
+                    child: Center(
+                      child: Stack(
+                        alignment: Alignment.center,
+                        clipBehavior: Clip.none,
+                        children: [
+                          // Pulsing beacon halo for aging SOS — intensity scales
+                          // with _agingTier (1hr/3hr/6hr+). A 6-hour SOS pulses
+                          // faster and larger than a 1-hour SOS.
+                          Container(
+                            width: 54 * _pulseAnimation.value,
+                            height: 54 * _pulseAnimation.value,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: AppColors.darkRed.withAlpha(_haloAlpha),
+                              border: Border.all(
+                                color: AppColors.darkRed.withAlpha(_haloBorderAlpha),
+                                width: 1.5,
+                              ),
+                            ),
+                          ),
+                          pinBody,
+                        ],
                       ),
                     ),
-                    pinBody,
-                  ],
+                  ),
                 ),
-              ),
-            );
-          },
+              );
+            },
+          ),
         ),
       );
     }
 
-    return RepaintBoundary(
-      child: Opacity(
-        opacity: opacity,
-        child: GestureDetector(
-          onTap: widget.onTap,
-          child: pinBody,
+    return Semantics(
+      label: semanticLabel,
+      button: true,
+      child: RepaintBoundary(
+        child: Opacity(
+          opacity: opacity,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: widget.onTap,
+            child: SizedBox(
+              // Minimum 48dp tap target — PERSON_C.md Wk4 D4.
+              width: 48,
+              height: 48,
+              child: Center(child: pinBody),
+            ),
+          ),
         ),
       ),
     );
@@ -556,6 +578,37 @@ class _ClaimPinWidgetState extends State<ClaimPinWidget>
     );
   }
 
+  // ─── Accessibility ────────────────────────────────────────────────
+  /// Builds a descriptive label for screen readers so that each pin
+  /// is reachable and meaningful without visual context.
+  ///
+  /// Shape and position already carry meaning for sighted users;
+  /// this label is the non-visual equivalent — PERSON_C.md Wk4 D4.
+  String _pinSemanticLabel(Claim claim) {
+    final trustLabel = switch (claim.claimTrust) {
+      ClaimTrust.unconfirmed => 'unconfirmed',
+      ClaimTrust.corroborated => 'corroborated',
+      ClaimTrust.groundConfirmed => 'ground confirmed',
+    };
+    final relTime = ClaimDisplayHelpers.relativeTimeLabel(claim.createdAtLogical);
+
+    switch (claim.type) {
+      case ClaimType.sos:
+        final aging = _isAgingSos ? ', aging' : '';
+        return 'SOS pin, $trustLabel$aging, $relTime. Tap to triage.';
+      case ClaimType.sosProxy:
+        final aging = _isAgingSos ? ', aging' : '';
+        return 'Proxy SOS pin, $trustLabel$aging, $relTime. Tap to triage.';
+      case ClaimType.hazardReport:
+        final p = claim.payload as HazardReportPayload;
+        return 'Hazard pin, ${p.hazardType.name}, ${p.confirmationCount} reports, $trustLabel. Tap for details.';
+      case ClaimType.resource:
+        final p = claim.payload as ResourcePayload;
+        final avail = p.available;
+        return 'Resource pin, ${p.category.name}, $avail available, $trustLabel. Tap for details.';
+    }
+  }
+
   // ─── Helpers ──────────────────────────────────────────────────────
   static IconData _hazardIcon(HazardType type) => ClaimDisplayHelpers.iconForHazard(type);
 
@@ -585,41 +638,50 @@ class ClusterPinWidget extends StatelessWidget {
     final bgColor = hasSos ? AppColors.darkRed : AppColors.deepNavy;
     final borderColor = hasSos ? AppColors.redLight : AppColors.blueLight;
 
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        decoration: BoxDecoration(
-          color: bgColor,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: borderColor, width: 2),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withAlpha(45),
-              blurRadius: 8,
-              offset: const Offset(0, 3),
-            ),
-          ],
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              hasSos ? Icons.sos_rounded : Icons.place,
-              color: Colors.white,
-              size: 16,
-            ),
-            const SizedBox(width: 4),
-            Text(
-              hasSos ? '$count SOS' : '$count Claims',
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 12,
-                fontWeight: FontWeight.w800,
-                letterSpacing: 0.3,
+    return Semantics(
+      label: hasSos
+          ? '$count SOS alerts nearby. Tap to see each one separately.'
+          : '$count claims nearby. Tap to expand.',
+      button: true,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: Container(
+          // Minimum 48dp tap target — PERSON_C.md Wk4 D4.
+          constraints: const BoxConstraints(minHeight: 48, minWidth: 48),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            color: bgColor,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: borderColor, width: 2),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withAlpha(45),
+                blurRadius: 8,
+                offset: const Offset(0, 3),
               ),
-            ),
-          ],
+            ],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                hasSos ? Icons.sos_rounded : Icons.place,
+                color: Colors.white,
+                size: 16,
+              ),
+              const SizedBox(width: 4),
+              Text(
+                hasSos ? '$count SOS' : '$count Claims',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.3,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

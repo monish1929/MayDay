@@ -34,24 +34,28 @@ class EntryScreen extends StatelessWidget {
 
               // ─── App Emblem / Brand Icon ─────────────────────────
               // Calm, trustworthy Deep Navy container with clear high-contrast symbol
-              Container(
-                width: 104,
-                height: 104,
-                decoration: BoxDecoration(
-                  color: AppColors.deepNavy,
-                  borderRadius: BorderRadius.circular(24),
-                  boxShadow: [
-                    BoxShadow(
-                      color: AppColors.deepNavy.withAlpha(30),
-                      blurRadius: 16,
-                      offset: const Offset(0, 6),
-                    ),
-                  ],
-                ),
-                child: const Icon(
-                  Icons.shield_outlined,
-                  size: 56,
-                  color: Colors.white,
+              Semantics(
+                label: 'MayDay app logo',
+                excludeSemantics: true,
+                child: Container(
+                  width: 104,
+                  height: 104,
+                  decoration: BoxDecoration(
+                    color: AppColors.deepNavy,
+                    borderRadius: BorderRadius.circular(24),
+                    boxShadow: [
+                      BoxShadow(
+                        color: AppColors.deepNavy.withAlpha(30),
+                        blurRadius: 16,
+                        offset: const Offset(0, 6),
+                      ),
+                    ],
+                  ),
+                  child: const Icon(
+                    Icons.shield_outlined,
+                    size: 56,
+                    color: Colors.white,
+                  ),
                 ),
               ),
 
@@ -89,36 +93,40 @@ class EntryScreen extends StatelessWidget {
               SizedBox(
                 width: double.infinity,
                 height: 56,
-                child: ElevatedButton(
-                  onPressed: () {
-                    Navigator.pushReplacementNamed(
-                      context,
-                      MainScreen.routeName,
-                      arguments: false, // isVolunteer = false
-                    );
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.strongBlue,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    elevation: 0,
-                  ),
-                  child: const Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.person_outline, size: 24),
-                      SizedBox(width: 12),
-                      Text(
-                        'User',
-                        style: TextStyle(
-                          fontSize: 17,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 0.5,
-                        ),
+                child: Semantics(
+                  button: true,
+                  label: 'Enter as User — report emergencies and hazards',
+                  child: ElevatedButton(
+                    onPressed: () {
+                      Navigator.pushReplacementNamed(
+                        context,
+                        MainScreen.routeName,
+                        arguments: false, // isVolunteer = false
+                      );
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.strongBlue,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
                       ),
-                    ],
+                      elevation: 0,
+                    ),
+                    child: const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.person_outline, size: 24),
+                        SizedBox(width: 12),
+                        Text(
+                          'User',
+                          style: TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -130,40 +138,44 @@ class EntryScreen extends StatelessWidget {
               SizedBox(
                 width: double.infinity,
                 height: 56,
-                child: OutlinedButton(
-                  onPressed: () {
-                    // Unlocks stored volunteer credential on-device. No network.
-                    Navigator.pushReplacementNamed(
-                      context,
-                      MainScreen.routeName,
-                      arguments: true, // isVolunteer = true
-                    );
-                  },
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: AppColors.deepNavy,
-                    backgroundColor: AppColors.surfaceWhite,
-                    side: const BorderSide(
-                      color: AppColors.deepNavy,
-                      width: 2,
-                    ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                  ),
-                  child: const Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.verified_user_outlined, size: 24),
-                      SizedBox(width: 12),
-                      Text(
-                        'Volunteer',
-                        style: TextStyle(
-                          fontSize: 17,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 0.5,
-                        ),
+                child: Semantics(
+                  button: true,
+                  label: 'Enter as Volunteer — verified during campaigns',
+                  child: OutlinedButton(
+                    onPressed: () {
+                      // Unlocks stored volunteer credential on-device. No network.
+                      Navigator.pushReplacementNamed(
+                        context,
+                        MainScreen.routeName,
+                        arguments: true, // isVolunteer = true
+                      );
+                    },
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppColors.deepNavy,
+                      backgroundColor: AppColors.surfaceWhite,
+                      side: const BorderSide(
+                        color: AppColors.deepNavy,
+                        width: 2,
                       ),
-                    ],
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
+                    child: const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.verified_user_outlined, size: 24),
+                        SizedBox(width: 12),
+                        Text(
+                          'Volunteer',
+                          style: TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
