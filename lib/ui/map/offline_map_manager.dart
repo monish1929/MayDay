@@ -19,8 +19,8 @@ import 'package:sqlite3/sqlite3.dart';
 /// - Returns HTTP 200 with PNG bytes on match, HTTP 404 with log message on miss.
 /// - Extends [ChangeNotifier] to report running tile loading counts to the UI.
 class OfflineMapManager extends ChangeNotifier {
-  static const String _mbtilesAssetPath = 'assets/tiles/wayanad.mbtiles';
-  static const String _mbtilesFileName = 'wayanad.mbtiles';
+  static const String _mbtilesAssetPath = 'assets/tiles/placeholder.mbtiles';
+  static const String _mbtilesFileName = 'placeholder.mbtiles';
   static final RegExp _tilePathRegex = RegExp(r'^/(\d+)/(\d+)/(\d+)\.png$');
 
   bool _isReady = false;

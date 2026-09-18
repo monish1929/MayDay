@@ -18,8 +18,8 @@ class DebugClaimSeeder {
   /// Seeds synthetic claims into the active SQLite database for testing scale and rendering.
   static Future<int> seedSyntheticClaims({
     int count = 120,
-    double baseLat = 11.75,
-    double baseLon = 76.075,
+    double baseLat = 12.9716,
+    double baseLon = 77.5946,
     double radiusDegrees = 0.15, // ~10-15km radius around base
   }) async {
     if (!kDebugMode) {

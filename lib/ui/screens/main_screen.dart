@@ -319,8 +319,8 @@ class _MainScreenState extends State<MainScreen> {
             final dist = sqrt(dx * dx + dy * dy);
             
             double maxHalfExtent = 0;
-            for (final c in cluster.claims) {
-              final extent = _pinHalfExtent(c.type);
+            for (final claim in cluster.claims) {
+              final extent = _pinHalfExtent(claim.type);
               if (extent > maxHalfExtent) maxHalfExtent = extent;
             }
             final threshold = maxHalfExtent + _pinHalfExtent(current.claim.type) + 8.0;
@@ -494,8 +494,8 @@ class _MainScreenState extends State<MainScreen> {
               ? MapLibreMap(
                   styleString: _mapManager.buildLocalStyleJson(),
                   initialCameraPosition: const CameraPosition(
-                    // Wayanad area — matches bundled wayanad.mbtiles
-                    target: LatLng(11.75, 76.075),
+                    // Bengaluru area — matches bundled placeholder .mbtiles
+                    target: LatLng(12.9716, 77.5946),
                     zoom: 12.0,
                   ),
                   trackCameraPosition: true,

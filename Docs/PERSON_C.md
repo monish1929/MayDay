@@ -350,10 +350,12 @@ That last check is worth more than any amount of internal design review.
 
 ### Day 1 — Real offline map tiles
 - [ ] Generate `.mbtiles` for an actual target district at low zoom
+  - *Blocked: Generating raster tiles via scraping violates OSM policy. Team decision needed on whether to switch map engine to Vector (MapLibre native + tilemaker) or build a heavy local raster pipeline (openstreetmap-carto + Mapnik).*
 - `[x]` Measure real size; feed it into the storage budget with B
   - *Note: Wayanad z8-14 is 6.26MB. Budget updated.*
 - [ ] Confirm tile eviction happens **before** active SOS records under pressure
 - [ ] Bundle at install; verify a fresh install has working maps with no network
+  - *Note: Temporarily reverted to placeholder.mbtiles due to OSM policy violation on the Wayanad tiles.*
 - [ ] Decide the district-scoping approach with the team
 
 ### Day 2 — Map performance on low-end hardware
