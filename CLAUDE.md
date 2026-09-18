@@ -98,17 +98,22 @@ Ed25519 signature from the originating device on every claim. Verified at every 
 
 > **UPDATE THIS SECTION AT THE START OF EVERY PHASE.** Ownership changes between phases; a stale table sends PRs to the wrong reviewer.
 
-**Current phase:** Week 1 — independent slices, no cross-dependencies.
+**Current phase:** Week 5 — hardening and field testing. Last updated 2026-09-17.
+
+Phases 0–4 are merged. `main` carries B's Phase 1 data layer, A's Phase 2–4 transport, message kinds 2–6, vouching and beaconing, and C's Weeks 2–4 app shell, map, forms and volunteer ops. `flutter analyze` is clean and the suite is green on `main`.
 
 | Person | Owns this week | Deliverable |
 |---|---|---|
-| **A** | BLE mesh spike (`mesh/`) | Two then three phones discovering + passing a message. Real numbers on range, discovery time, battery drain per hour. |
-| **B** | Claim schema + trust engine (`data/`) | Claim table in SQLite, both ID paths, trust state machine, type-specific decay, logical clocks. Unit tested with a simulated multi-device harness. |
-| **C** | App shell + map (`ui/`) | Entry screen, navigation, MapLibre GL map with a placeholder `.mbtiles`, layer toggle, bottom sheet, mock pins, volunteer ops screen skeleton. |
+| **A** | Field testing + battery (`mesh/`) | The numbers nothing else can supply: multi-device scale test, partition/rejoin, outdoor range walked to real distances, duty cycling, and the 72-hour battery figure. See `PERSON_A.md` Week 5. |
+| **B** | Resource counters + attestation provenance (`data/`) | The four open decisions in §3.4 — per-device pledge rows, range semantics, `pledgedBy`, and `firstSeenVia` for local attestation. C's UI is built and waiting on these. |
+| **C** | Real tiles, polish, field testing (`ui/`) | Offline `.mbtiles` for a real area, accessibility pass, and the UI half of the field test. See `PERSON_C.md` Week 5. |
 
 Each person has a per-track task list and progress log — `Docs/PERSON_A.md`, `Docs/PERSON_B.md`, `Docs/PERSON_C.md`. They expand this table into checkboxes and record what actually happened. **This file stays authoritative on invariants and workflow;** if a PERSON doc contradicts it, the PERSON doc is the one that is wrong. When working on someone's track, read their file alongside this one and update its checkboxes as work lands.
 
-Nothing imports across these three this week. C fakes the shape of a Claim rather than waiting on B.
+**Two process notes, learned the hard way this phase:**
+
+- **A PERSON doc travels with its branch.** There is one copy per branch and they disagree. Checkboxes read off a stale branch showed Week 3–4 as unstarted when it was finished and merged. Check the doc on `main`, or on the branch the work actually landed on.
+- **A and B use checkboxes; C uses a dated progress-log table.** Both are fine, but a checkbox count across the three does not compare. Don't read C's `0 of 161` as "no progress."
 
 ### 3.2 Phase roadmap
 
@@ -128,13 +133,32 @@ Nothing imports across these three this week. C fakes the shape of a Claim rathe
 | `mesh/` | A | **B specifically** | B is the one who'll notice if the wire format breaks what the schema needs |
 | `data/` | B | **A specifically** | Same, in reverse |
 | `ui/` | C | whoever's flow it touches | |
-| `flows/rescue/` | assign in Phase 3 | the other Phase-2 pairer | |
-| `flows/report/` | assign in Phase 3 | the other Phase-2 pairer | |
+| `flows/rescue/` | A | C | Assigned in Phase 3 and delivered — all three SOS sub-types, QR resolution, replay defence. |
+| `flows/report/` | B | A or C | Assigned in the Phase 3 split. Not started yet. |
 | `flows/contribute/` | C | A or B | |
-| `identity/` | assign in Phase 4 | both others | Vouching + revocation is security-sensitive |
+| `identity/` | A | **both others** | Opened early in Phase 2 because signing was needed, formally a Phase 4 folder. Vouching + revocation is security-sensitive, so the two-reviewer rule stands. Secure key storage is still **not** built: `loadOrCreateProvisional()` writes the seed to `SharedPreferences` in plaintext. |
 | `CLAIM_SCHEMA.md` | **no single owner** | **both others, always** | Silent field renames are the most likely way this project quietly breaks |
 
+**If a required reviewer can't get to it quickly, the rule still holds — it just waits.** Don't silently retarget a PR at whoever is free. If something genuinely cannot wait, say so in the PR: which rule you're departing from, why, and who reviewed instead. Four PRs merged on 2026-09-17 with only one reviewer available at the time, `identity/` among them — that was a scheduling exception, recorded so it can be revisited, not a new default.
+
 **Note for the agent:** with three people, "the other person" is ambiguous — always name a specific reviewer from this table, never say "get someone to review it." PRs drift toward whoever approves fastest otherwise.
+
+### 3.4 Open decisions in `data/` — B's, and blocking C
+
+> **This section exists because work in someone else's folder got done anyway and logged on their sheet, which made the record look healthier than it was.** If you pick up work that isn't yours, say so out loud.
+
+**These four belong to B** (`data/`, per §3.3). They are written up in full so they can be picked up cold, **not** so that someone else can quietly take them. If they need to move, move them deliberately and update §3.3 — don't let ownership drift.
+
+**The logging rule this broke:** between 2026-08-21 and 2026-09-17, some `data/` changes were written by A and recorded in `PERSON_B.md`. That misattributes the work and hides the real state of the track. **If you do work in someone else's area, log it on your own sheet and name whose area it was.** The entries from that window stay, marked.
+
+Four `data/` decisions are open and blocking C's UI (raised 2026-09-17):
+
+1. **`pledgedCount` accumulation.** Resource pledges from different devices in one geohash bucket overwrite instead of accumulating. A scalar sum on merge is not idempotent — the same pledge arriving by two paths double-counts. The shape that works is the one `corroborations` already uses: a per-`(claim_id, device_id)` row, with `pledgedCount` computed as the sum. That also supplies items 2 and 3 for free.
+2. **Range rendering** (`CLAIM_SCHEMA.md` §8.1, "2–6 packets"). Per-device rows are the *precondition*, not the answer: once pledges are rows every device converges on one sum, and what remains is partial knowledge. Both `pledgedCount` and `claimedReports` are lower bounds, so `available` is an estimate that can move either way. Deriving an honest range from two lower bounds is still an open decision — don't render a range until it is settled.
+3. **`pledgedBy` attribution.** No field records who pledged; `originDeviceId` is a hash. Falls out of item 1.
+4. **`firstSeenVia` for local explicit attestation.** Nothing records how *this* device came to know a claim, so the hazard "I can see this too" button cannot populate the field honestly, and setting it `null` would fabricate corroboration (§2.2). Fix is a provenance field written at first ingest — `ClaimIngestion.ingest()` already holds the envelope. Note the button is **not** blocked on trust semantics: record the attestation either way, and the existing anti-echo check neutralises it for trust while `dispatch_priority` still moves (§2.4).
+
+Items 1–3 change `CLAIM_SCHEMA.md` §8.1 and therefore need the three-person sync §4.3 requires, plus a matching update to §2 here.
 
 ---
 
