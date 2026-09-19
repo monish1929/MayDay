@@ -206,6 +206,24 @@ These are **not the same quantity** and must not share a variable, a config key,
 
 `hopLimit` decrements once per relay hop, regardless of claim type. Exact default: **TBD — pending Phase 0 hop-range data.**
 
+### 7.1 OPEN — the stored `hopLimit` and the sent `hopLimit` currently disagree
+
+Two provisional defaults exist, in two folders, and they are not the same number:
+
+| Where | Value | Stamps |
+|---|---|---|
+| `ClaimFactory.provisionalHopLimit` (`data/`) | a single value for every type | the stored `Claim.hopLimit` |
+| `RoutingPolicy.initialHopLimitFor()` (`mesh/`) | **per type** — sos/sosProxy highest, resource lowest | the envelope actually transmitted |
+
+Nothing is broken today, because the **wire** value governs propagation and the stored field is not read when relaying. But a locally-raised SOS is stored claiming one hop budget and sent with another, and §7 exists precisely because two quantities wearing one name caused real confusion in v1.
+
+**The question this file has to answer is not "which number" — it is whether `hopLimit` is one value or per-type.** That is a contract decision, so it belongs here rather than in either folder:
+
+- If **per-type**, `data/` should not hold a single constant, and this section needs a per-type table like `displayLifetime` has.
+- If **single**, `mesh/` should stop varying it by type, and the argument that an SOS must travel further than a resource pin needs answering some other way.
+
+Do not fix this by editing one folder to match the other. It touches `data/` (B) and `mesh/` (A), and changing it here needs the §12 three-person sync. The numbers themselves stay **TBD** until Phase 0 range data exists either way — settling the *shape* does not require the measurement, and shouldn't wait for it.
+
 `displayLifetime` behavior is type-specific:
 
 | Type | Decay |
@@ -301,6 +319,38 @@ Consequences that affect `data/` directly:
 - Enums serialize as **ints**, never names
 - `GeoPoint` as two 4-byte floats, not doubles — ~1m precision is plenty at a 150m bucket
 
+### 9.2a Body shapes for kinds 2–6
+
+`kind` says how to read `body`. Kind 0 (claim) is §5's signed core; kind 1 (corroboration) carries a `Corroboration`. The rest are below.
+
+**Every body is a CBOR array, not a map. Position is the contract** — adding a field means appending, never inserting, and never reordering. A decoder checks the array length first and rejects anything else, so an inserted field is not a compatible change.
+
+```
+kind 2 — resolution            kind 3 — vouch
+[ sosId            : text        [ voucheePubKey : bytes(32)
+, nonce            : bytes(16)   , vouchIndex    : uint      // self-asserted, diagnostic only
+, requesterPubKey  : bytes(32)   , vouchCap      : uint      // carried INSIDE the signed vouch
+, requesterSig     : bytes(64)   , logicalClock  : LogicalClock
+, method           : uint        ]
+                     // ResolutionMethod
+, resolvedAtLogical : LogicalClock
+]
+
+kind 4 — revocation            kind 5 — volunteerBeacon      kind 6 — timeGossip
+[ revokedPubKey : bytes(32)      [ beaconSeq    : uint         [ wallClockMs  : uint   // NOT a small int
+, reason        : uint           , logicalClock : LogicalClock , logicalClock : LogicalClock
+                  // RevocationReason                          ]
+, logicalClock  : LogicalClock   ]
+]
+```
+
+Notes that are contract, not commentary:
+
+- **Kind 2 carries two signatures.** `requesterSig` is over `(sosId || nonce)` and sits inside the body; the volunteer's counter-signature is the envelope's own `originSig`. **Both** are verified before a resolution is applied — a resolution signed by only one party closes nobody's rescue (§6.2).
+- **`vouchCap` travels inside the signed vouch** so any device can check the cap without asking anyone. A cap held only locally is a cap the issuing device can lie about.
+- **`wallClockMs` is a full CBOR integer, not a small int.** Epoch milliseconds is ~1.7e12 and does not fit the small-int encoding. Every other integer on this wire is a count or an enum index and does fit — this is the one exception, and getting it wrong produces a body that encodes and then fails to decode.
+- **Kind 6 is never relayed.** A clock reading is only meaningful from the device you heard it from; forwarding one launders a stranger's clock into a neighbour's.
+
 ### 9.3 Receive pipeline — order matters
 
 Every receiving device, in this exact order:
@@ -367,6 +417,91 @@ CREATE TABLE seen_messages (
 );
 ```
 
+### 10.0a Tables owned by `mesh/` and `identity/`
+
+The five below are keyed on public keys or message ids rather than on a claim, the same arrangement `seen_messages` already has. They are listed here because §10 is where someone looks to find out what a device actually stores — not because `data/` owns them.
+
+```sql
+-- A resolution can outrun the SOS it resolves: it floods from wherever the
+-- volunteer stood, the claim from wherever the person was, and a device on the
+-- far side may meet the resolution first. Dropping it is not an option (§1.1) —
+-- the claim would arrive afterwards and sit ACTIVE for ever on that phone, with
+-- volunteers still being dispatched to someone already rescued. Parked here and
+-- applied when the claim shows up. Persisted, not in memory: a device that
+-- restarts between the two arrivals must not forget.
+CREATE TABLE pending_resolutions (
+  sos_id            TEXT PRIMARY KEY,
+  nonce             BLOB    NOT NULL,
+  requester_pub_key BLOB    NOT NULL,
+  requester_sig     BLOB    NOT NULL,
+  resolver_pub_key  BLOB    NOT NULL,   -- the counter-signing volunteer
+  method            INTEGER NOT NULL,   -- ResolutionMethod
+  clock_device_id   TEXT    NOT NULL,   -- resolvedAtLogical — see §4
+  clock_counter     INTEGER NOT NULL
+);
+
+-- Nonces already spent closing a rescue — the replay row in CLAUDE.md §6.2.
+--
+-- A table and not a field on the claim, for two reasons. A resolution can
+-- arrive for a claim this device does not hold, so there is no claim row to
+-- hang it off at the moment the decision must be made. And it has to OUTLIVE
+-- the claim: the point is that a photographed QR presented hours later is
+-- refused, and by then the claim may be ARCHIVED.
+--
+-- Keyed on the pair, never the nonce alone. A nonce is 16 random bytes chosen
+-- by a stranger's phone; keying on it alone would let one device burn an id it
+-- does not own by asserting a collision.
+CREATE TABLE consumed_resolution_nonces (
+  sos_id TEXT NOT NULL,
+  nonce  BLOB NOT NULL,
+  PRIMARY KEY (sos_id, nonce)
+);
+
+-- One row per (voucher, vouchee). The primary key IS "a voucher speaks for a
+-- person once" (CLAUDE.md §4.5), expressed in the schema rather than left to
+-- calling code:
+-- repeating a vouch must not let one voucher consume its cap twice, or count
+-- twice toward promotion.
+CREATE TABLE vouches (
+  voucher_pub_key BLOB    NOT NULL,
+  vouchee_pub_key BLOB    NOT NULL,
+  vouch_index     INTEGER NOT NULL,   -- self-asserted, diagnostic only
+  vouch_cap       INTEGER NOT NULL,   -- carried inside the signed vouch — §9.2a
+  voucher_sig     BLOB    NOT NULL,   -- envelope originSig, kept so the stored
+                                      -- row stays independently verifiable
+                                      -- without the envelope
+  clock_device_id TEXT    NOT NULL,
+  clock_counter   INTEGER NOT NULL,
+  PRIMARY KEY (voucher_pub_key, vouchee_pub_key)
+);
+
+CREATE INDEX idx_vouches_vouchee ON vouches(vouchee_pub_key);
+
+-- Only the original voucher may revoke its own vouch, so the key is the same
+-- pair. `clock_counter` is what "most recent valid revocation wins" is measured
+-- on — a later re-vouch outranks an earlier revocation.
+CREATE TABLE revocations (
+  revoker_pub_key BLOB    NOT NULL,
+  revoked_pub_key BLOB    NOT NULL,
+  reason          INTEGER NOT NULL,   -- RevocationReason
+  clock_device_id TEXT    NOT NULL,
+  clock_counter   INTEGER NOT NULL,
+  PRIMARY KEY (revoker_pub_key, revoked_pub_key)
+);
+
+-- Campaign-verified public keys — the roots the whole vouch web hangs off.
+CREATE TABLE trust_anchors (
+  pub_key BLOB PRIMARY KEY,
+  label   TEXT
+);
+```
+
+**`trust_anchors` is empty in every build today, and that has a consequence worth stating.** Issuing and loading a campaign credential is unbuilt identity work. Until it exists no device is `campaignVerified`, so no vouch can be accepted from anyone, so `vouchedProvisional` is unreachable. That is the correct failure direction — nobody is trusted by accident — but it means **vouching cannot be exercised end to end on hardware yet.** Don't read a green vouch test suite as a working trust web.
+
+### 10.0b Schema migrations are additive, always
+
+`schemaVersion` is currently **3**. A device that has been through a disaster already holds claims, so an upgrade that dropped and recreated the store would delete active SOS records — forbidden outright by CLAUDE.md §1.1, and by §10.2 below. `_upgradeDB` therefore only ever adds tables, and there is deliberately no destructive branch in it. Keep it that way: if a future change genuinely needs a column dropped, that is a team conversation, not a migration.
+
 ### 10.1 `display_lifetime_ms` must be NULL for SOS
 
 Not a large number — **NULL**. A large value invites someone to "tune it down" later during optimisation. NULL forces a code change and a conversation. Enforce it at write time:
@@ -405,7 +540,16 @@ enum HazardType { flood, roadBlock, structuralDamage, other }
 enum ResourceCategory { foodWater, shelter, medical, equipment }
 ```
 
-`NodeTrust` (campaignVerified | vouchedProvisional | unverified) lives in the identity model, not here — it describes a *device/person*, not a claim. Don't confuse `claimTrust` with `nodeTrust`; see `CLAUDE.md` §5 naming table.
+Two more live in the identity model rather than the claim model, because they describe a *device or person*, not a claim. They are listed here anyway: both are persisted (§10) and `RevocationReason` also travels on the wire (§9.2a, kind 4), so both are contract.
+
+```dart
+enum NodeTrust        { campaignVerified, vouchedProvisional, unverified }
+enum RevocationReason { withdrawn, compromised }
+```
+
+Don't confuse `claimTrust` with `nodeTrust`; see `CLAUDE.md` §7 naming table.
+
+**Everything else in `lib/` that happens to be a Dart enum is not in this list and must not be added to it.** `IngestRejection`, `ReceiveOutcome`, `RelayDecision`, `FormType` and the rest are internal to one folder — they never cross the wire and never hit the store, so they are free to change without a team sync. The rule that an enum serializes as an int, never a name (§9.2), applies only to the enums above.
 
 ---
 
